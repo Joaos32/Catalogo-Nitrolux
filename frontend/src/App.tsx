@@ -62,7 +62,6 @@ const BRAND_META: Record<
     exportTitle: "Exportar recorte Pienza",
   },
 };
-
 function formatDisplayNumber(value: number): string {
   const maximumFractionDigits = Number.isInteger(value) ? 0 : 1;
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits }).format(value);
@@ -76,16 +75,38 @@ function useCatalogProducts() {
   });
 }
 
+function getResponsiveProductsBatch(): number {
+  if (typeof window === "undefined") return INITIAL_PRODUCTS_LIMIT;
+  if (window.innerWidth <= 520) return 6;
+  if (window.innerWidth <= 740) return 8;
+  if (window.innerWidth <= 1024) return 12;
+  return INITIAL_PRODUCTS_LIMIT;
+}
+
+function useResponsiveProductsBatch(): number {
+  const [batchSize, setBatchSize] = useState(getResponsiveProductsBatch);
+
+  useEffect(() => {
+    const updateBatchSize = () => setBatchSize(getResponsiveProductsBatch());
+    window.addEventListener("resize", updateBatchSize);
+    return () => window.removeEventListener("resize", updateBatchSize);
+  }, []);
+
+  return batchSize;
+}
+
 export default function App(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { productId } = useParams<{ productId: string }>();
   const initialUiState = useMemo(() => readPersistedUiState(), []);
+  const responsiveProductsBatch = useResponsiveProductsBatch();
 
   const [query, setQuery] = useState(initialUiState.query);
   const [category, setCategory] = useState(initialUiState.category);
   const [brand, setBrand] = useState<CatalogBrand>(initialUiState.brand);
   const [isLoggingOutRepresentative, setIsLoggingOutRepresentative] = useState(false);
+  const [visibleProductCount, setVisibleProductCount] = useState(responsiveProductsBatch);
 
   const productsQuery = useCatalogProducts();
   const representativeSessionQuery = useQuery({
@@ -183,31 +204,37 @@ export default function App(): JSX.Element {
   }, [brand, category, products, query]);
 
   const isHomeShowcase = category === "Todas" && normalizeText(query) === "";
-  const shouldLimitVisibleProducts = category === "Todas";
+
+  useEffect(() => {
+    setVisibleProductCount(responsiveProductsBatch);
+  }, [brand, category, query, responsiveProductsBatch]);
 
   const visibleProducts = useMemo(() => {
     if (isHomeShowcase) {
       return getHomeShowcaseProducts(filteredProducts, INITIAL_PRODUCTS_LIMIT);
     }
-    if (shouldLimitVisibleProducts) {
-      return filteredProducts.slice(0, INITIAL_PRODUCTS_LIMIT);
+    return filteredProducts.slice(0, visibleProductCount);
+  }, [filteredProducts, isHomeShowcase, visibleProductCount]);
+
+  const embeddedPhotosByProductId = useMemo(() => {
+    const entries = new Map<string, ProductPhotos>();
+    for (const item of visibleProducts) {
+      if (hasAnyPhoto(item.photos)) {
+        entries.set(item.id, item.photos);
+      }
     }
-    return filteredProducts;
-  }, [filteredProducts, isHomeShowcase, shouldLimitVisibleProducts]);
+    if (selectedProduct && hasAnyPhoto(selectedProduct.photos)) {
+      entries.set(selectedProduct.id, selectedProduct.photos);
+    }
+    return Object.fromEntries(entries) as PhotosByProductId;
+  }, [selectedProduct, visibleProducts]);
 
   const photoTargets = useMemo(() => {
-    const targets = new Map<string, CatalogProduct>();
-
-    for (const item of visibleProducts) {
-      targets.set(item.id, item);
+    if (!selectedProduct || hasAnyPhoto(selectedProduct.photos)) {
+      return [];
     }
-
-    if (selectedProduct) {
-      targets.set(selectedProduct.id, selectedProduct);
-    }
-
-    return Array.from(targets.values());
-  }, [selectedProduct, visibleProducts]);
+    return [selectedProduct];
+  }, [selectedProduct]);
 
   const photosQuery = useQuery({
     queryKey: [
@@ -237,7 +264,10 @@ export default function App(): JSX.Element {
     },
   });
 
-  const photosByProductId = useMemo(() => photosQuery.data || {}, [photosQuery.data]);
+  const photosByProductId = useMemo(
+    () => ({ ...embeddedPhotosByProductId, ...(photosQuery.data || {}) }),
+    [embeddedPhotosByProductId, photosQuery.data]
+  );
   const selectedPhotos = selectedProduct ? photosByProductId[selectedProduct.id] || null : null;
 
   const productsByCategory = useMemo(() => {
@@ -270,6 +300,7 @@ export default function App(): JSX.Element {
   const loadingPhotos = photosQuery.isFetching;
   const loadedPhotoCount = Object.keys(photosByProductId).length;
   const hiddenProductsCount = Math.max(filteredProducts.length - visibleProducts.length, 0);
+  const canLoadMoreProducts = !isHomeShowcase && hiddenProductsCount > 0;
   const homeShowcaseHasMonthlySales = isHomeShowcase && visibleProducts.some((item) => item.monthlySales > 0);
   const homeShowcaseSalesTotal = homeShowcaseHasMonthlySales
     ? visibleProducts.reduce((total, item) => total + item.monthlySales, 0)
@@ -316,6 +347,10 @@ export default function App(): JSX.Element {
       format,
       code: selectedProduct.code,
     });
+  };
+
+  const loadMoreProducts = () => {
+    setVisibleProductCount((current) => Math.min(current + responsiveProductsBatch, filteredProducts.length));
   };
 
   return (
@@ -517,18 +552,26 @@ export default function App(): JSX.Element {
                   </section>
                 ) : (
                   <section className="catalog-grid catalog-grid-flat">
-                      {visibleProducts.map((item, index) => (
-                        <ProductCard
-                          key={`${item.routeId}-${item.id}`}
-                          item={item}
-                          photos={photosByProductId[item.id]}
-                          index={index}
-                          showSalesHighlight={homeShowcaseHasMonthlySales}
-                          salesRank={homeShowcaseHasMonthlySales ? index + 1 : undefined}
-                          onOpen={() => openProduct(item)}
-                        />
-                      ))}
+                    {visibleProducts.map((item, index) => (
+                      <ProductCard
+                        key={`${item.routeId}-${item.id}`}
+                        item={item}
+                        photos={photosByProductId[item.id]}
+                        index={index}
+                        showSalesHighlight={homeShowcaseHasMonthlySales}
+                        salesRank={homeShowcaseHasMonthlySales ? index + 1 : undefined}
+                        onOpen={() => openProduct(item)}
+                      />
+                    ))}
                   </section>
+                )}
+                {canLoadMoreProducts && (
+                  <div className="load-more-panel">
+                    <button type="button" className="load-more-button" onClick={loadMoreProducts}>
+                      Carregar mais {Math.min(responsiveProductsBatch, hiddenProductsCount)} produtos
+                    </button>
+                    <span>{hiddenProductsCount} ainda no recorte atual</span>
+                  </div>
                 )}
               </>
             ) : (

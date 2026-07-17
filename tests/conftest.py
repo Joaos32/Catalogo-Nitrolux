@@ -56,6 +56,7 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
         "CATALOG_ERP_INBOX_DIR",
         "CATALOG_ERP_SOURCE_DIRS",
         "CATALOG_ERP_ADMIN_TOKEN",
+        "CATALOG_ALLOW_OPEN_ADMIN",
         "CATALOG_ERP_MAX_UPLOAD_BYTES",
         "CATALOG_ADMIN_USERS_FILE",
         "CATALOG_ADMIN_LOGIN_EMAIL",
@@ -91,6 +92,7 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
         monkeypatch.delenv(env_key, raising=False)
 
     monkeypatch.setenv("CATALOG_ERP_AUTO_DISCOVERY", "false")
+    monkeypatch.setenv("CATALOG_ALLOW_OPEN_ADMIN", "true")
     monkeypatch.setenv("CATALOG_SKIP_DOTENV", "true")
     monkeypatch.setenv("CATALOG_ADMIN_USERS_FILE", str(tmp_path / "disabled-admin-users.json"))
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_USERS_FILE", str(tmp_path / "disabled-representative-users.json"))
@@ -104,7 +106,10 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
     )
 
     from catalog.cache import cache
+    from catalog.auth import _AUTH_FAILURES
 
     cache.store.clear()
+    _AUTH_FAILURES.clear()
     yield
     cache.store.clear()
+    _AUTH_FAILURES.clear()

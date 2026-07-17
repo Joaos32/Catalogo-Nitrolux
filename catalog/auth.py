@@ -55,6 +55,9 @@ POST_LOGIN_PATH_SESSION_KEY = "admin_post_login_path"
 DEFAULT_ADMIN_REDIRECT_PATH = "/erp"
 REPRESENTATIVE_ROLE = "representative"
 REPRESENTATIVE_COOKIE_NAME = "catalog_rep_session"
+AUTH_RATE_LIMIT_WINDOW_SECONDS = 300
+AUTH_RATE_LIMIT_MAX_ATTEMPTS = 10
+_AUTH_FAILURES: dict[str, list[float]] = {}
 
 
 def _resolve_cache_file() -> str:
@@ -100,6 +103,47 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
         return None
     token = token.strip()
     return token or None
+
+
+def _client_rate_limit_ip(request: Request) -> str:
+    forwarded_for = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded_for:
+        return forwarded_for
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit_key(request: Request, scope: str, identity: str) -> str:
+    normalized_identity = str(identity or "").strip().lower() or "unknown"
+    return f"{scope}:{_client_rate_limit_ip(request)}:{normalized_identity}"
+
+
+def _prune_auth_failures(key: str, now: float | None = None) -> list[float]:
+    timestamp = now if now is not None else time.time()
+    cutoff = timestamp - AUTH_RATE_LIMIT_WINDOW_SECONDS
+    attempts = [item for item in _AUTH_FAILURES.get(key, []) if item >= cutoff]
+    if attempts:
+        _AUTH_FAILURES[key] = attempts
+    else:
+        _AUTH_FAILURES.pop(key, None)
+    return attempts
+
+
+def _check_auth_rate_limit(request: Request, scope: str, identity: str) -> str:
+    key = _rate_limit_key(request, scope, identity)
+    attempts = _prune_auth_failures(key)
+    if len(attempts) >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many authentication attempts")
+    return key
+
+
+def _record_auth_failure(key: str) -> None:
+    attempts = _prune_auth_failures(key)
+    attempts.append(time.time())
+    _AUTH_FAILURES[key] = attempts
+
+
+def _clear_auth_failures(key: str) -> None:
+    _AUTH_FAILURES.pop(key, None)
 
 
 def _admin_login_capabilities() -> dict[str, bool]:
@@ -415,9 +459,12 @@ def representative_login(request: Request, payload: dict = Body(...)):
     if not provided_password:
         raise HTTPException(status_code=400, detail="Missing password")
 
+    rate_limit_key = _check_auth_rate_limit(request, "representative-login", provided_email)
     selected_user = next((user for user in users if secrets.compare_digest(user["email"], provided_email)), None)
     if not selected_user or not verify_representative_password(selected_user, provided_password):
+        _record_auth_failure(rate_limit_key)
         raise HTTPException(status_code=403, detail="Invalid representative credentials")
+    _clear_auth_failures(rate_limit_key)
 
     token, claims = _build_representative_token(selected_user)
     response_payload = _representative_status_payload(claims)
@@ -434,17 +481,21 @@ def representative_login(request: Request, payload: dict = Body(...)):
 
 
 @auth_router.post("/auth/representative/reset-password")
-def representative_reset_password(payload: dict = Body(...)):
+def representative_reset_password(request: Request, payload: dict = Body(...)):
     provided_email = str(payload.get("email") or payload.get("login") or "").strip().lower()
     reset_code = str(payload.get("reset_code") or payload.get("code") or "").strip()
     new_password = str(payload.get("new_password") or payload.get("password") or "").strip()
+    rate_limit_key = _check_auth_rate_limit(request, "representative-reset", provided_email)
 
     try:
         user = reset_representative_password_with_code(provided_email, reset_code, new_password)
     except KeyError:
+        _record_auth_failure(rate_limit_key)
         raise HTTPException(status_code=404, detail="Representative not found") from None
     except ValueError as exc:
+        _record_auth_failure(rate_limit_key)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _clear_auth_failures(rate_limit_key)
 
     return {
         "success": True,
@@ -477,6 +528,7 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
     if not provided_password:
         raise HTTPException(status_code=400, detail="Missing password")
 
+    rate_limit_key = _check_auth_rate_limit(request, "admin-login", provided_email or "admin")
     selected_user = None
     if provided_email:
         selected_user = next((user for user in admin_users if secrets.compare_digest(user["email"], provided_email)), None)
@@ -484,7 +536,9 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
         selected_user = admin_users[0]
 
     if not selected_user or not verify_admin_password(selected_user, provided_password):
+        _record_auth_failure(rate_limit_key)
         raise HTTPException(status_code=403, detail="Invalid admin credentials")
+    _clear_auth_failures(rate_limit_key)
 
     _mark_admin_session(request, provider="password", email=selected_user["email"])
     return auth_session_status(request)

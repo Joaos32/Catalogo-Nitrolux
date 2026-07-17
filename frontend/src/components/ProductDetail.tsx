@@ -17,12 +17,18 @@ interface ProductDetailProps {
 const ATTRIBUTE_LABEL_MAP: Record<string, string> = {
   CODPROD: "Código",
   CODAUXILIAR: "Código de barras",
+  INFORMACOESTECNICAS: "Informações técnicas",
   NBM: "NCM",
   PERCIPIVENDA: "IPI",
 };
 
 function getAttributeDisplayLabel(label: string): string {
-  const normalized = String(label || "").trim().toUpperCase();
+  const normalized = String(label || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "")
+    .trim()
+    .toUpperCase();
   return ATTRIBUTE_LABEL_MAP[normalized] || label;
 }
 

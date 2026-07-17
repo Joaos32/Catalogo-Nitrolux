@@ -79,8 +79,6 @@ O desenho geral privilegia fallback e enriquecimento:
 |-- frontend/
 |   |-- src/
 |   |-- legacy/
-|   |-- app.js
-|   |-- js/
 |   `-- vite.config.ts
 |-- tests/
 `-- README.md
@@ -89,7 +87,6 @@ O desenho geral privilegia fallback e enriquecimento:
 Observacao importante:
 
 - `frontend/legacy/*` e o fallback real usado pelo backend quando nao existe `frontend/dist/index.html`.
-- `frontend/app.js` e `frontend/js/*` sao copias dos arquivos de `frontend/legacy/*`.
 - `frontend/node_modules` e `frontend/dist` nao fazem parte da logica autoral do projeto.
 
 ---
@@ -2288,17 +2285,6 @@ Observacoes importantes:
 - tem a mesma logica principal do frontend moderno;
 - foi mantido para fallback de execucao sem build.
 
-## `frontend/app.js` e `frontend/js/*`
-
-Esses arquivos sao copias byte a byte do frontend legado.
-
-Interpretacao:
-
-- provavelmente sao resquicios de uma fase de transicao;
-- o fallback efetivo usado por `settings.py` e `frontend/legacy`.
-
----
-
 ## Testes
 
 ## `tests/conftest.py`
@@ -2528,23 +2514,12 @@ Isso nao quebra a logica central, mas:
 - pode afetar UX;
 - merece uma limpeza posterior de encoding.
 
-### 2. O endpoint `/catalog/items` hoje parece ocioso
-
-Ele retorna lista vazia.
-
-### 3. O frontend legado existe em duplicidade
-
-- `frontend/legacy/*`;
-- `frontend/app.js` e `frontend/js/*`.
-
-Provavelmente seria bom consolidar isso no futuro.
-
-### 4. O modulo `onedrive.py` ja nao representa apenas OneDrive
+### 2. O modulo `onedrive.py` ja nao representa apenas OneDrive
 
 Hoje ele e quase uma fachada geral do dominio.
 O nome historico ficou, mas a responsabilidade cresceu.
 
-### 5. `erp_catalog.py`, `stock_catalog.py` e `exporter.py` concentram muita regra
+### 3. `erp_catalog.py`, `stock_catalog.py` e `exporter.py` concentram muita regra
 
 Sao os modulos mais importantes para entender o negocio e tambem os mais sensiveis para manutencao.
 

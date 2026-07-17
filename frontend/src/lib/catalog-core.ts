@@ -1,6 +1,6 @@
 ﻿import type { SyntheticEvent } from "react";
 
-const DEFAULT_API_BASES = ["", "http://127.0.0.1:8000", "http://127.0.0.1:5000"];
+const DEFAULT_API_BASES = import.meta.env.DEV ? ["", "http://127.0.0.1:8000", "http://127.0.0.1:5000"] : [""];
 
 function parseApiBases(rawValue: string | undefined): string[] {
   if (!rawValue) return [];

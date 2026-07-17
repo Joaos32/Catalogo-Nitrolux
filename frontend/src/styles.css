@@ -157,8 +157,8 @@ body.body-theme-pienza::after {
 .hero {
   max-width: 1180px;
   margin: 0 auto;
-  border-radius: var(--radius-xl);
-  padding: 38px 36px 36px;
+  border-radius: 22px;
+  padding: 22px 28px 20px;
   color: var(--ink-900);
   border: 1px solid rgba(50, 100, 180, 0.1);
   background: #ffffff;
@@ -169,16 +169,16 @@ body.body-theme-pienza::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 240px;
+  min-height: 148px;
 }
 .hero-premium {
-  min-height: 176px;
+  min-height: 148px;
 }
 .hero-identity {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   position: relative;
   z-index: 1;
 }
@@ -192,8 +192,8 @@ body.body-theme-pienza::after {
   gap: 7px;
   border: 1px solid rgba(50, 100, 190, 0.2);
   border-radius: 999px;
-  padding: 7px 14px;
-  font-size: 11px;
+  padding: 6px 12px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.24em;
@@ -244,19 +244,19 @@ body.body-theme-pienza::after {
 .hero-brand-name {
   margin: 0;
   font-family: "Sora", "Manrope", sans-serif;
-  font-size: clamp(46px, 7.2vw, 90px);
-  line-height: 0.9;
+  font-size: clamp(38px, 5.2vw, 64px);
+  line-height: 0.92;
   letter-spacing: 0.08em;
   font-weight: 800;
   color: #1e4a8a;
   text-shadow: none;
 }
 .hero-brand-subtitle {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: clamp(14px, 1.8vw, 24px);
+  font-size: clamp(13px, 1.4vw, 18px);
   line-height: 1.2;
   color: #2e5880;
   font-weight: 700;
@@ -300,7 +300,7 @@ body.body-theme-pienza::after {
 }
 .content-wrap {
   max-width: 1180px;
-  margin: 26px auto 0;
+  margin: 16px auto 0;
 }
 .brand-tabs {
   margin-bottom: 16px;
@@ -310,9 +310,9 @@ body.body-theme-pienza::after {
 }
 .brand-tab {
   border: 1px solid rgba(40, 90, 165, 0.1);
-  border-radius: 20px;
-  padding: 18px 20px;
-  min-height: 82px;
+  border-radius: 16px;
+  padding: 14px 16px;
+  min-height: 66px;
   background: #ffffff;
   box-shadow: var(--shadow-card);
   display: grid;
@@ -339,7 +339,7 @@ body.body-theme-pienza::after {
 }
 .brand-tab-title {
   font-family: "Sora", "Manrope", sans-serif;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.1;
   font-weight: 700;
   color: #1c3e6a;
@@ -877,10 +877,11 @@ body.body-theme-pienza::after {
 .detail-attribute-item {
   margin: 0;
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 2fr;
-  gap: 8px;
-  padding: 5px 0;
+  grid-template-columns: minmax(96px, 0.38fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 0;
   border-bottom: 1px dashed rgba(30, 98, 198, 0.16);
+  min-width: 0;
 }
 .detail-attribute-item:last-child {
   border-bottom: 0;
@@ -890,13 +891,18 @@ body.body-theme-pienza::after {
   font-size: 12px;
   font-weight: 700;
   color: #1f57af;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .detail-attribute-item dd {
   margin: 0;
   font-size: 12px;
   color: var(--ink-700);
+  line-height: 1.45;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .detail-gallery {
   margin-top: 12px;
@@ -1041,10 +1047,10 @@ body.body-theme-pienza::after {
   opacity: 0;
 }
 .brand-theme-pienza .hero {
-  min-height: 200px;
-  padding: 38px 36px 36px;
+  min-height: 148px;
+  padding: 22px 28px 20px;
   border: 1px solid rgba(190, 130, 60, 0.22);
-  border-radius: 30px;
+  border-radius: 22px;
   background:
     radial-gradient(ellipse 70% 50% at 50% 0%, rgba(196, 148, 90, 0.1) 0%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(252, 246, 236, 0.96) 100%);
@@ -1111,8 +1117,8 @@ body.body-theme-pienza::after {
   box-shadow: 0 4px 12px rgba(150, 90, 30, 0.1);
 }
 .brand-theme-pienza .hero-brand-name {
-  font-size: clamp(46px, 7.2vw, 90px);
-  line-height: 0.9;
+  font-size: clamp(38px, 5.2vw, 64px);
+  line-height: 0.92;
   letter-spacing: 0.08em;
   background: linear-gradient(180deg, #c08535 0%, #9a6218 40%, #7a4a10 100%);
   -webkit-background-clip: text;
@@ -1122,13 +1128,13 @@ body.body-theme-pienza::after {
   text-shadow: none;
 }
 .brand-theme-pienza .hero-brand-subtitle {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   display: inline-flex;
   align-items: center;
   gap: 10px;
   max-width: none;
   color: #6a4010;
-  font-size: clamp(14px, 1.8vw, 24px);
+  font-size: clamp(13px, 1.4vw, 18px);
   line-height: 1.2;
   letter-spacing: 0.02em;
   font-weight: 700;
@@ -1145,7 +1151,7 @@ body.body-theme-pienza::after {
   justify-content: center;
 }
 .brand-theme-pienza .content-wrap {
-  margin-top: 18px;
+  margin-top: 14px;
   position: relative;
   z-index: 3;
 }
@@ -1503,6 +1509,50 @@ body.body-theme-pienza::after {
 .hero-admin {
   min-height: 176px;
 }
+.brand-theme-nitrolux .hero,
+.brand-theme-pienza .hero {
+  min-height: 88px;
+  padding: 12px 18px;
+  border-radius: 16px;
+}
+.brand-theme-nitrolux .hero-identity,
+.brand-theme-pienza .hero-identity {
+  gap: 6px;
+}
+.brand-theme-nitrolux .hero-kicker,
+.brand-theme-pienza .hero-kicker {
+  padding: 4px 9px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+.brand-theme-nitrolux .hero-brand-name,
+.brand-theme-pienza .hero-brand-name {
+  font-size: clamp(28px, 3.6vw, 42px);
+  line-height: 0.94;
+}
+.brand-theme-nitrolux .hero-brand-subtitle,
+.brand-theme-pienza .hero-brand-subtitle {
+  margin-top: 0;
+  font-size: clamp(11px, 1.1vw, 14px);
+  line-height: 1.15;
+}
+.brand-theme-nitrolux .hero-brand-subtitle::before,
+.brand-theme-nitrolux .hero-brand-subtitle::after,
+.brand-theme-pienza .hero-brand-subtitle::before,
+.brand-theme-pienza .hero-brand-subtitle::after {
+  width: 20px;
+}
+.brand-theme-nitrolux .hero-admin-actions,
+.brand-theme-pienza .hero-admin-actions {
+  gap: 6px;
+}
+.brand-theme-nitrolux .hero-link-button,
+.brand-theme-pienza .hero-link-button,
+.brand-theme-nitrolux .hero-session-pill,
+.brand-theme-pienza .hero-session-pill {
+  padding: 6px 10px;
+  font-size: 11px;
+}
 .auth-page-shell .content-wrap {
   margin-top: 22px;
 }
@@ -1518,7 +1568,7 @@ body.body-theme-pienza::after {
 }
 .admin-content {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 .admin-auth-shell {
   display: grid;
@@ -1535,7 +1585,7 @@ body.body-theme-pienza::after {
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 14px;
+  gap: 16px;
 }
 .admin-grid-deploy {
   align-items: start;
@@ -1543,14 +1593,118 @@ body.body-theme-pienza::after {
 .admin-grid-products {
   grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.25fr);
 }
-.admin-panel {
-  border-radius: 20px;
-  border: 1px solid rgba(26, 92, 190, 0.15);
-  background: linear-gradient(166deg, rgba(255, 255, 255, 0.97), rgba(241, 247, 255, 0.95));
-  box-shadow: 0 12px 26px rgba(16, 58, 118, 0.09);
-  padding: 16px;
+.admin-command-center {
   display: grid;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid rgba(26, 92, 190, 0.13);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(16, 58, 118, 0.07);
+}
+.admin-command-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-command-copy h2 {
+  margin: 0;
+  font-family: "Sora", "Manrope", sans-serif;
+  font-size: 24px;
+  line-height: 1.15;
+  color: #123a75;
+}
+.admin-command-copy span {
+  color: var(--ink-700);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.admin-command-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  gap: 8px;
+}
+.admin-command-metrics div {
+  min-height: 72px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(29, 98, 196, 0.12);
+  background: #f7fbff;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+}
+.admin-command-metrics strong {
+  font-family: "Sora", "Manrope", sans-serif;
+  color: #123a75;
+  font-size: 22px;
+  line-height: 1;
+}
+.admin-command-metrics span {
+  color: var(--ink-500);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.admin-workspace-tabs {
+  position: sticky;
+  top: 10px;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(26, 92, 190, 0.12);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(16, 58, 118, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.admin-workspace-tabs button {
+  min-height: 58px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink-700);
+  font: inherit;
+  cursor: pointer;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 12px;
+  transition: background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+.admin-workspace-tabs button:hover {
+  background: rgba(42, 111, 215, 0.07);
+}
+.admin-workspace-tabs button.is-active {
+  background: #1f57af;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(28, 88, 181, 0.18);
+}
+.admin-workspace-tabs span {
+  font-size: 14px;
+  font-weight: 800;
+}
+.admin-workspace-tabs small {
+  color: inherit;
+  opacity: 0.78;
+  font-size: 12px;
+  line-height: 1.25;
+}
+.admin-panel {
+  border-radius: 16px;
+  border: 1px solid rgba(26, 92, 190, 0.13);
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(16, 58, 118, 0.07);
+  padding: 18px;
+  display: grid;
+  gap: 16px;
 }
 .admin-summary-panel {
   align-content: start;
@@ -1568,7 +1722,7 @@ body.body-theme-pienza::after {
   margin: 2px 0 0;
   font-family: "Sora", "Manrope", sans-serif;
   color: #1c3e6a;
-  font-size: 26px;
+  font-size: 22px;
   line-height: 1.1;
 }
 .admin-eyebrow {
@@ -1603,14 +1757,23 @@ body.body-theme-pienza::after {
 }
 .admin-stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 10px;
+}
+.admin-stats-grid .stat-card {
+  min-width: 0;
+}
+.admin-stats-grid .stat-card strong {
+  font-size: clamp(24px, 2.7vw, 32px);
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 .admin-status-box {
   padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(29, 98, 196, 0.14);
-  background: rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  border: 1px solid rgba(29, 98, 196, 0.12);
+  background: #f8fbff;
   display: grid;
   gap: 6px;
 }
@@ -1636,9 +1799,9 @@ body.body-theme-pienza::after {
 .admin-product-list {
   display: grid;
   gap: 10px;
-  max-height: 620px;
+  max-height: min(620px, 66vh);
   overflow: auto;
-  padding-right: 2px;
+  padding-right: 4px;
 }
 .admin-file-card {
   display: grid;
@@ -1646,9 +1809,9 @@ body.body-theme-pienza::after {
   gap: 12px;
   align-items: center;
   padding: 12px;
-  border-radius: 16px;
-  border: 1px solid rgba(29, 98, 196, 0.14);
-  background: rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  border: 1px solid rgba(29, 98, 196, 0.12);
+  background: #ffffff;
 }
 .admin-file-card.is-active {
   border-color: rgba(29, 98, 196, 0.34);
@@ -1707,9 +1870,9 @@ body.body-theme-pienza::after {
 .admin-product-item {
   width: 100%;
   border: 1px solid rgba(29, 98, 196, 0.14);
-  border-radius: 16px;
+  border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.88);
+  background: #ffffff;
   text-align: left;
   cursor: pointer;
   display: flex;
@@ -1740,7 +1903,7 @@ body.body-theme-pienza::after {
 .admin-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 .admin-preview-grid {
   display: grid;
@@ -1788,9 +1951,9 @@ body.body-theme-pienza::after {
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(29, 98, 196, 0.14);
-  background: rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  border: 1px solid rgba(29, 98, 196, 0.12);
+  background: #ffffff;
 }
 .admin-sample-row strong {
   display: block;
@@ -1878,8 +2041,8 @@ body.body-theme-pienza::after {
     width: clamp(64px, 9vw, 110px);
   }
   .brand-theme-pienza .hero {
-    min-height: 190px;
-    padding: 32px 26px;
+    min-height: 142px;
+    padding: 20px 24px;
   }
   .brand-theme-pienza .hero-identity {
     width: auto;
@@ -1907,8 +2070,8 @@ body.body-theme-pienza::after {
   }
   .hero {
     border-radius: 20px;
-    padding: 24px 18px 22px;
-    min-height: 136px;
+    padding: 18px 14px 16px;
+    min-height: 112px;
   }
   .hero h1 {
     font-size: 30px;
@@ -1920,7 +2083,7 @@ body.body-theme-pienza::after {
     margin-top: 0;
   }
   .hero-brand-name {
-    font-size: clamp(36px, 11vw, 56px);
+    font-size: clamp(30px, 9vw, 44px);
   }
   .hero-kicker {
     letter-spacing: 0.18em;
@@ -1928,7 +2091,7 @@ body.body-theme-pienza::after {
     padding: 6px 12px;
   }
   .hero-brand-subtitle {
-    font-size: clamp(12px, 4vw, 18px);
+    font-size: clamp(11px, 3.4vw, 15px);
     gap: 8px;
   }
   .hero-brand-subtitle::before,
@@ -1953,21 +2116,21 @@ body.body-theme-pienza::after {
     width: 40px;
   }
   .brand-theme-pienza .hero {
-    min-height: 180px;
-    padding: 26px 18px 24px;
-    border-radius: 22px;
+    min-height: 118px;
+    padding: 18px 14px 16px;
+    border-radius: 20px;
   }
   .brand-theme-pienza .hero-identity {
     width: auto;
     min-height: 0;
     padding: 0;
-    gap: 14px;
+    gap: 10px;
   }
   .brand-theme-pienza .hero-brand-name {
-    font-size: clamp(36px, 11vw, 56px);
+    font-size: clamp(30px, 9vw, 44px);
   }
   .brand-theme-pienza .hero-brand-subtitle {
-    font-size: clamp(12px, 4vw, 18px);
+    font-size: clamp(11px, 3.4vw, 15px);
     gap: 8px;
   }
   .brand-theme-pienza .hero-brand-subtitle::before,
@@ -1991,6 +2154,28 @@ body.body-theme-pienza::after {
   .admin-grid-products,
   .admin-form-grid {
     grid-template-columns: 1fr;
+  }
+  .admin-command-center {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+  .admin-command-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .admin-command-metrics div {
+    min-height: 66px;
+    padding: 10px 8px;
+  }
+  .admin-command-metrics strong {
+    font-size: 18px;
+  }
+  .admin-workspace-tabs {
+    position: relative;
+    top: auto;
+    grid-template-columns: 1fr;
+  }
+  .admin-workspace-tabs button {
+    min-height: 52px;
   }
   .admin-panel-head {
     flex-direction: column;
@@ -2135,4 +2320,368 @@ body.body-theme-pienza::after {
   border-radius: 2px;
   background: var(--blue-700);
   flex-shrink: 0;
+}
+
+@media (max-width: 1024px) {
+  .brand-theme-nitrolux .hero,
+  .brand-theme-pienza .hero {
+    min-height: 82px;
+    padding: 10px 16px;
+  }
+}
+
+@media (max-width: 740px) {
+  .brand-theme-nitrolux .hero,
+  .brand-theme-pienza .hero {
+    min-height: 76px;
+    padding: 10px 12px;
+  }
+  .brand-theme-nitrolux .hero-brand-name,
+  .brand-theme-pienza .hero-brand-name {
+    font-size: clamp(24px, 7vw, 34px);
+  }
+  .brand-theme-nitrolux .hero-brand-subtitle,
+  .brand-theme-pienza .hero-brand-subtitle {
+    font-size: 11px;
+  }
+  .brand-theme-nitrolux .hero-link-button,
+  .brand-theme-pienza .hero-link-button,
+  .brand-theme-nitrolux .hero-session-pill,
+  .brand-theme-pienza .hero-session-pill {
+    width: auto;
+    padding: 6px 9px;
+  }
+}
+
+.load-more-panel {
+  margin: 18px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.load-more-button {
+  min-height: 42px;
+  border: 1px solid rgba(34, 104, 211, 0.24);
+  border-radius: 999px;
+  background: #1f57af;
+  color: #ffffff;
+  padding: 10px 18px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.load-more-button:hover {
+  transform: translateY(-1px);
+  background: #1b4d9f;
+  box-shadow: 0 10px 22px rgba(28, 88, 181, 0.16);
+}
+.load-more-button:focus-visible {
+  outline: 3px solid rgba(43, 106, 208, 0.3);
+  outline-offset: 2px;
+}
+.load-more-panel span {
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 1180px) {
+  .content-wrap,
+  .hero {
+    max-width: calc(100vw - 40px);
+  }
+  .catalog-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+  .detail-layout {
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .brand-tabs,
+  .stats-grid {
+    gap: 10px;
+  }
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  }
+  .catalog-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .media {
+    height: 216px;
+  }
+  .thumb-strip {
+    padding: 10px;
+  }
+  .thumb img {
+    height: 74px;
+  }
+  .detail-layout {
+    grid-template-columns: 1fr;
+  }
+  .detail-media {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .content-wrap,
+  .hero {
+    max-width: calc(100vw - 24px);
+  }
+  .brand-tabs,
+  .toolbar,
+  .stats-grid,
+  .catalog-grid {
+    grid-template-columns: 1fr;
+  }
+  .brand-tab,
+  .toolbar,
+  .export-panel,
+  .stat-card,
+  .product-card,
+  .detail-panel,
+  .showcase-hero-panel {
+    border-radius: 14px;
+  }
+  .brand-tab {
+    min-height: 58px;
+  }
+  .export-actions,
+  .detail-gallery-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .export-button,
+  .detail-action-button {
+    width: 100%;
+    min-width: 0;
+    padding-left: 10px;
+    padding-right: 10px;
+    text-align: center;
+  }
+  .media {
+    height: auto;
+    aspect-ratio: 4 / 3;
+  }
+  .chip {
+    max-width: calc(100% - 24px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip-category {
+    left: 12px;
+    right: auto;
+    top: 44px;
+    max-width: calc(100% - 24px);
+  }
+  .card-body {
+    padding: 15px 14px 13px;
+  }
+  .thumb-strip {
+    gap: 6px;
+  }
+  .thumb img {
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .thumb figcaption {
+    font-size: 10px;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+  .detail-panel {
+    padding: 14px;
+  }
+  .detail-meta {
+    padding: 14px;
+  }
+  .detail-meta h2 {
+    font-size: 21px;
+  }
+  .detail-attributes {
+    max-height: 320px;
+  }
+  .detail-attribute-item {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+  .detail-gallery {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .load-more-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .load-more-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .page-shell {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .content-wrap,
+  .hero {
+    max-width: calc(100vw - 20px);
+  }
+  .hero-brand-subtitle::before,
+  .hero-brand-subtitle::after {
+    display: none;
+  }
+  .hero-admin-actions,
+  .export-actions,
+  .detail-gallery-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .hero-link-button,
+  .hero-session-pill {
+    width: 100%;
+  }
+  .stats-grid {
+    gap: 8px;
+  }
+  .stat-card {
+    padding: 14px;
+  }
+  .stat-card strong {
+    font-size: 30px;
+  }
+  .detail-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 740px) {
+  .page-shell {
+    padding: 10px 10px 36px;
+  }
+  .content-wrap,
+  .hero {
+    width: 100%;
+    max-width: none;
+  }
+  .brand-theme-nitrolux .hero,
+  .brand-theme-pienza .hero {
+    min-height: auto;
+    padding: 12px;
+  }
+  .brand-theme-nitrolux .hero-identity,
+  .brand-theme-pienza .hero-identity,
+  .hero-identity {
+    width: 100%;
+    align-items: stretch;
+    text-align: center;
+  }
+  .hero-kicker,
+  .brand-theme-nitrolux .hero-kicker,
+  .brand-theme-pienza .hero-kicker {
+    align-self: center;
+    max-width: 100%;
+    justify-content: center;
+    white-space: normal;
+    line-height: 1.2;
+  }
+  .hero-brand,
+  .hero-brand-name,
+  .hero-brand-subtitle {
+    max-width: 100%;
+  }
+  .brand-theme-nitrolux .hero-brand-name,
+  .brand-theme-pienza .hero-brand-name,
+  .hero-brand-name {
+    font-size: clamp(25px, 9vw, 36px);
+    overflow-wrap: anywhere;
+  }
+  .brand-theme-nitrolux .hero-brand-subtitle,
+  .brand-theme-pienza .hero-brand-subtitle,
+  .hero-brand-subtitle {
+    justify-content: center;
+    text-wrap: balance;
+  }
+  .hero-admin-actions,
+  .brand-theme-nitrolux .hero-admin-actions,
+  .brand-theme-pienza .hero-admin-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .brand-theme-nitrolux .hero-link-button,
+  .brand-theme-pienza .hero-link-button,
+  .brand-theme-nitrolux .hero-session-pill,
+  .brand-theme-pienza .hero-session-pill,
+  .hero-link-button,
+  .hero-session-pill {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    padding: 8px 10px;
+    text-align: center;
+    white-space: normal;
+  }
+  .brand-tabs,
+  .toolbar,
+  .stats-grid,
+  .catalog-grid,
+  .catalog-grid-flat {
+    width: 100%;
+    min-width: 0;
+  }
+  .brand-theme-pienza .toolbar,
+  .brand-theme-nitrolux .toolbar,
+  .toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px;
+  }
+  .field {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+  }
+  .field span,
+  .brand-theme-pienza .field span {
+    margin: 0;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    line-height: 1.25;
+    white-space: normal;
+  }
+  .field input,
+  .field select {
+    min-width: 0;
+    width: 100%;
+    height: 48px;
+  }
+  .export-panel,
+  .detail-gallery-toolbar {
+    align-items: stretch;
+  }
+  .export-actions,
+  .detail-gallery-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .product-card,
+  .card-hitbox,
+  .media,
+  .card-body,
+  .thumb-strip {
+    min-width: 0;
+  }
 }

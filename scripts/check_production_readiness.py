@@ -83,6 +83,9 @@ def _validate_backend(values: dict[str, str]) -> tuple[list[str], list[str]]:
     if not _is_false(values.get("CATALOG_ENABLE_API_DOCS", "")):
         errors.append("CATALOG_ENABLE_API_DOCS must be false in production.")
 
+    if _is_true(values.get("CATALOG_ALLOW_OPEN_ADMIN", "")):
+        errors.append("CATALOG_ALLOW_OPEN_ADMIN must not be true in production.")
+
     origins = _csv_values(values.get("CATALOG_CORS_ALLOW_ORIGINS", ""))
     if not origins:
         errors.append("CATALOG_CORS_ALLOW_ORIGINS must contain the final frontend origin.")

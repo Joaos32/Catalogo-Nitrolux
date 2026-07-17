@@ -238,6 +238,7 @@ export default function ErpAdminPage(): JSX.Element {
   const [loginPassword, setLoginPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [activeAdminSection, setActiveAdminSection] = useState<"deploy" | "representatives" | "products">("deploy");
 
   const sessionQuery = useQuery({ queryKey: ["admin-session"], queryFn: fetchAdminSession, retry: false });
   const protectionEnabled = Boolean(sessionQuery.data?.protection_enabled);
@@ -672,6 +673,43 @@ export default function ErpAdminPage(): JSX.Element {
           <>
             {!protectionEnabled && <div className="banner banner-warning">O painel está aberto neste ambiente porque nenhum login administrativo foi configurado no backend.</div>}
             {combinedError && <div className="banner banner-warning">{combinedError}</div>}
+            <section className="admin-command-center" aria-label="Resumo administrativo">
+              <div className="admin-command-copy">
+                <p className="admin-eyebrow">Operação do catálogo</p>
+                <h2>Painel administrativo</h2>
+                <span>{statusQuery.data?.source_name || "Nenhum JSON ativo identificado"}</span>
+              </div>
+              <div className="admin-command-metrics" aria-label="Indicadores principais">
+                <div>
+                  <strong>{statusQuery.data?.products_loaded ?? 0}</strong>
+                  <span>Produtos</span>
+                </div>
+                <div>
+                  <strong>{files.length}</strong>
+                  <span>JSONs</span>
+                </div>
+                <div>
+                  <strong>{representativeSummary?.total_users ?? 0}</strong>
+                  <span>Acessos</span>
+                </div>
+              </div>
+            </section>
+            <nav className="admin-workspace-tabs" aria-label="Áreas do painel">
+              <button type="button" className={activeAdminSection === "deploy" ? "is-active" : ""} onClick={() => setActiveAdminSection("deploy")}>
+                <span>Implantação</span>
+                <small>Revisar e ativar JSON</small>
+              </button>
+              <button type="button" className={activeAdminSection === "representatives" ? "is-active" : ""} onClick={() => setActiveAdminSection("representatives")}>
+                <span>Representantes</span>
+                <small>Gerenciar acessos</small>
+              </button>
+              <button type="button" className={activeAdminSection === "products" ? "is-active" : ""} onClick={() => setActiveAdminSection("products")}>
+                <span>Produtos</span>
+                <small>Editar JSON ativo</small>
+              </button>
+            </nav>
+            {activeAdminSection === "deploy" && (
+              <>
             <section className="admin-grid admin-grid-deploy">
               <article className="admin-panel admin-summary-panel">
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Implantação</p><h2>Controle do ambiente</h2></div></div>
@@ -691,7 +729,7 @@ export default function ErpAdminPage(): JSX.Element {
                 <div className="admin-inline-actions">
                   <button type="button" className="export-button" onClick={() => void refreshAdminData()}>Atualizar dados</button>
                   <label className={`export-button admin-upload-button ${isUploading ? "is-disabled" : ""}`}><input type="file" accept=".json,application/json" onChange={(event) => void handleStageFileUpload(event)} disabled={isUploading} />{isUploading ? "Enviando JSON..." : "Enviar JSON para revisão"}</label>
-                  <button type="button" className="export-button is-secondary" onClick={() => { setDraft(EMPTY_DRAFT); setNotice(null); }}>Novo produto</button>
+                  <button type="button" className="export-button is-secondary" onClick={() => { setDraft(EMPTY_DRAFT); setNotice(null); setActiveAdminSection("products"); }}>Novo produto</button>
                 </div>
               </article>
               <article className="admin-panel admin-preview-panel">
@@ -722,6 +760,9 @@ export default function ErpAdminPage(): JSX.Element {
                 })}
               </div>
             </section>
+              </>
+            )}
+            {activeAdminSection === "representatives" && (
             <section className="admin-grid admin-grid-products">
               <article className="admin-panel">
                 <div className="admin-panel-head">
@@ -952,6 +993,8 @@ export default function ErpAdminPage(): JSX.Element {
                 </div>
               </article>
             </section>
+            )}
+            {activeAdminSection === "products" && (
             <section className="admin-grid admin-grid-products">
               <article className="admin-panel">
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Produtos do JSON ativo</p><h2>Lista para edição</h2></div><span className="result-summary">{productsQuery.isLoading ? "Carregando..." : `${filteredProducts.length} itens no recorte`}</span></div>
@@ -985,6 +1028,7 @@ export default function ErpAdminPage(): JSX.Element {
                 <div className="admin-inline-actions"><button type="button" className="export-button" onClick={() => void handleSaveProduct()} disabled={isSaving}>{isSaving ? "Salvando..." : "Salvar no JSON"}</button><button type="button" className="export-button is-secondary" onClick={() => { setDraft(EMPTY_DRAFT); setNotice(null); }} disabled={isSaving}>Limpar formulário</button></div>
               </article>
             </section>
+            )}
           </>
         )}
       </main>

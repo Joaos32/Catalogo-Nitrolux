@@ -22,7 +22,8 @@ def require_erp_admin(
     authorization: str | None = Header(default=None),
 ) -> None:
     """Protege rotas de ERP com token administrativo opcional."""
-    configured_token = load_settings().erp_admin_token
+    settings = load_settings()
+    configured_token = settings.erp_admin_token
     if is_admin_session_authenticated(request):
         return
 
@@ -33,7 +34,7 @@ def require_erp_admin(
             raise HTTPException(status_code=403, detail="Invalid ERP admin token")
         return
 
-    if not configured_token and not is_admin_login_configured():
+    if not configured_token and not is_admin_login_configured() and settings.allow_open_admin:
         return
 
     raise HTTPException(status_code=401, detail="Admin login required")

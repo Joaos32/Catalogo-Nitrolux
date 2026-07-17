@@ -70,6 +70,7 @@ class Settings:
     cors_allow_origins: list[str]
     cors_allow_credentials: bool
     erp_admin_token: str | None
+    allow_open_admin: bool
     admin_login_email: str | None
     admin_login_password: str | None
     representative_login_email: str | None
@@ -79,6 +80,7 @@ class Settings:
     representative_jwt_secret: str | None
     representative_jwt_expires_minutes: int
     session_secret: str
+    session_secret_generated: bool
     session_max_age_seconds: int
     session_cookie_secure: bool
 
@@ -102,6 +104,10 @@ def load_settings() -> Settings:
             default=True,
         ),
         erp_admin_token=_optional_env(os.getenv("CATALOG_ERP_ADMIN_TOKEN")),
+        allow_open_admin=_parse_bool_env(
+            os.getenv("CATALOG_ALLOW_OPEN_ADMIN"),
+            default=False,
+        ),
         admin_login_email=_optional_env(os.getenv("CATALOG_ADMIN_LOGIN_EMAIL")),
         admin_login_password=_optional_env(os.getenv("CATALOG_ADMIN_LOGIN_PASSWORD")),
         representative_login_email=_optional_env(os.getenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL")),
@@ -111,6 +117,7 @@ def load_settings() -> Settings:
         representative_jwt_secret=_optional_env(os.getenv("CATALOG_REPRESENTATIVE_JWT_SECRET")),
         representative_jwt_expires_minutes=int(os.getenv("CATALOG_REPRESENTATIVE_JWT_EXPIRES_MINUTES", "720")),
         session_secret=os.getenv("CATALOG_SESSION_SECRET") or _GENERATED_SESSION_SECRET,
+        session_secret_generated=not bool(os.getenv("CATALOG_SESSION_SECRET")),
         session_max_age_seconds=int(os.getenv("CATALOG_SESSION_MAX_AGE_SECONDS", "43200")),
         session_cookie_secure=_parse_bool_env(
             os.getenv("CATALOG_SESSION_COOKIE_SECURE"),

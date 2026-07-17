@@ -51,8 +51,7 @@ PAGE_SIZE = (1240, 1754)
 PAGE_MARGIN = 80
 BASE_DIR = Path(__file__).resolve().parents[1]
 BRAND_BANNER_CANDIDATES = (
-    BASE_DIR / "frontend" / "public" / "assets" / "azul-nitro.jpg",
-    BASE_DIR / "frontend" / "assets" / "azul-nitro.jpg",
+    BASE_DIR / "frontend" / "legacy" / "assets" / "azul-nitro.jpg",
     BASE_DIR / "Azul nitro.jpg",
 )
 DISPLAY_LABEL_MAP = {

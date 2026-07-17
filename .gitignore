@@ -14,6 +14,7 @@ reports/representative_users.json
 
 # Local editor/assistant state
 .claude/settings.local.json
+.vscode/
 
 # Runtime logs and process output
 *.log

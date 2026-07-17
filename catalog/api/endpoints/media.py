@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
 
 from ..errors import internal_server_error_response
@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/photos", response_model=ProductPhotosSchema)
-async def photos(shareUrl: str | None = None, code: str | None = None):
+async def photos(response: Response, shareUrl: str | None = None, code: str | None = None):
     """Retorna URLs de fotos categorizadas do OneDrive local ou Microsoft Graph."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_product_photos_payload(code=code, share_url=shareUrl)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -37,9 +38,10 @@ async def photos(shareUrl: str | None = None, code: str | None = None):
 
 
 @router.get("/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def product_images(codigo: str, shareUrl: str | None = None):
+async def product_images(codigo: str, response: Response, shareUrl: str | None = None):
     """Retorna todas as variacoes de imagem para um codigo de produto."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_product_images_payload(codigo, share_url=shareUrl)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -49,9 +51,10 @@ async def product_images(codigo: str, shareUrl: str | None = None):
 
 
 @router.get("/google-drive/photos", response_model=ProductPhotosSchema)
-async def google_drive_photos(code: str | None = None):
+async def google_drive_photos(response: Response, code: str | None = None):
     """Retorna fotos categorizadas encontradas no Google Drive para um codigo."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_google_drive_photos_payload(code or "")
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -61,9 +64,10 @@ async def google_drive_photos(code: str | None = None):
 
 
 @router.get("/google-drive/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def google_drive_product_images(codigo: str):
+async def google_drive_product_images(codigo: str, response: Response):
     """Retorna a galeria de imagens do Google Drive para um codigo de produto."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_google_drive_images_payload(codigo)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -73,9 +77,10 @@ async def google_drive_product_images(codigo: str):
 
 
 @router.get("/s3/photos", response_model=ProductPhotosSchema)
-async def s3_photos(code: str | None = None):
+async def s3_photos(response: Response, code: str | None = None):
     """Retorna fotos categorizadas encontradas no S3 para um codigo."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_s3_photos_payload(code or "")
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -85,9 +90,10 @@ async def s3_photos(code: str | None = None):
 
 
 @router.get("/s3/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def s3_product_images(codigo: str):
+async def s3_product_images(codigo: str, response: Response):
     """Retorna a galeria de imagens do S3 para um codigo de produto."""
     try:
+        response.headers["Cache-Control"] = "private, max-age=60"
         return get_s3_images_payload(codigo)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})

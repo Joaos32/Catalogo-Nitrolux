@@ -8,6 +8,7 @@ import sys
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from catalog.api import register_api_routes, register_frontend_routes
@@ -97,6 +98,19 @@ def create_app() -> FastAPI:
     settings = load_settings()
 
     logger.info("Starting Catalogo API with Python executable %s", sys.executable)
+    if settings.session_secret_generated:
+        logger.warning(
+            "CATALOG_SESSION_SECRET is not set; using a temporary per-process secret. "
+            "Sessions and representative JWTs that reuse it will be invalid after restart."
+        )
+    if settings.allow_open_admin:
+        logger.warning(
+            "CATALOG_ALLOW_OPEN_ADMIN is enabled; administrative routes are open without login or token."
+        )
+    if settings.representative_login_password and not settings.representative_jwt_secret:
+        logger.warning(
+            "CATALOG_REPRESENTATIVE_JWT_SECRET is not set; representative JWTs will use CATALOG_SESSION_SECRET."
+        )
 
     app = FastAPI(
         title="Catalogo API",
@@ -105,6 +119,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.api_docs_enabled else None,
         openapi_url="/openapi.json" if settings.api_docs_enabled else None,
     )
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     _configure_cors(
         app,
         allow_origins=settings.cors_allow_origins,
