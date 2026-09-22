@@ -208,6 +208,7 @@ def _load_blob_payload() -> dict[str, Any] | None:
             _managed_users_blob_path(),
             access="private",
             token=token,
+            use_cache=False,
         )
     except BlobNotFoundError:
         return {"users": []}
@@ -236,6 +237,7 @@ def _write_blob_payload(payload: dict[str, Any]) -> bool:
         content_type="application/json; charset=utf-8",
         add_random_suffix=False,
         overwrite=True,
+        cache_control_max_age=0,
         token=token,
     )
     return True

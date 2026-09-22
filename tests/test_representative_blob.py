@@ -62,10 +62,11 @@ def test_environment_login_survives_temporary_blob_failure(monkeypatch):
 def test_representative_registry_uses_private_vercel_blob(monkeypatch):
     stored_payload: bytes | None = None
 
-    def fake_get(path, *, access, token):
+    def fake_get(path, *, access, token, use_cache):
         assert path == "catalogo/representative_users.json"
         assert access == "private"
         assert token == "blob-test-token"
+        assert use_cache is False
         if stored_payload is None:
             raise BlobNotFoundError()
         return SimpleNamespace(content=stored_payload)
@@ -78,6 +79,7 @@ def test_representative_registry_uses_private_vercel_blob(monkeypatch):
         content_type,
         add_random_suffix,
         overwrite,
+        cache_control_max_age,
         token,
     ):
         nonlocal stored_payload
@@ -86,6 +88,7 @@ def test_representative_registry_uses_private_vercel_blob(monkeypatch):
         assert content_type.startswith("application/json")
         assert add_random_suffix is False
         assert overwrite is True
+        assert cache_control_max_age == 0
         assert token == "blob-test-token"
         stored_payload = body
         return SimpleNamespace(pathname=path)
