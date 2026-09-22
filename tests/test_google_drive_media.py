@@ -38,6 +38,7 @@ def test_google_drive_images_route_matches_product_code(monkeypatch):
     assert payload["codigo"] == "1234"
     assert [item["name"] for item in payload["imagens"]] == ["1234 (1).jpg", "1234 (2).jpg"]
     assert payload["imagens"][0]["variant"] == 1
+    assert payload["imagens"][0]["url"] == "/catalog/media/google-drive/file-1"
 
 
 def test_google_drive_photos_route_categorizes_variants(monkeypatch):
@@ -72,9 +73,9 @@ def test_google_drive_photos_route_categorizes_variants(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["white_background"].endswith("id=white")
-    assert payload["measures"].endswith("id=measure")
-    assert payload["ambient"].endswith("id=ambient")
+    assert payload["white_background"] == "/catalog/media/google-drive/white"
+    assert payload["measures"] == "/catalog/media/google-drive/measure"
+    assert payload["ambient"] == "/catalog/media/google-drive/ambient"
 
 
 def test_product_images_uses_google_drive_when_local_is_empty(monkeypatch):

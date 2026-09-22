@@ -56,7 +56,10 @@ def is_configured() -> bool:
 
 
 def _build_file_url(file_id: str) -> str:
-    return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
+    # Mantem a imagem na mesma origem da API. Isso evita CORS, respeita o
+    # cookie JWT do representante e permite que o backend controle o tamanho
+    # da miniatura antes de entregar o arquivo ao navegador.
+    return f"/catalog/media/google-drive/{file_id}"
 
 
 def fetch_google_drive_image(file_id: str, size: str = "detail") -> tuple[bytes, str]:
@@ -281,7 +284,11 @@ def find_images_for_codes(codes: List[str], folder_id: str | None = None) -> Dic
             {
                 "name": str(item.get("name") or ""),
                 "variant": _match_filename(str(item.get("name") or ""), code) or 0,
-                "url": str(item.get("url") or ""),
+                "url": (
+                    _build_file_url(str(item.get("id") or "").strip())
+                    if str(item.get("id") or "").strip()
+                    else str(item.get("url") or "")
+                ),
             }
             for item in matches
         ]
