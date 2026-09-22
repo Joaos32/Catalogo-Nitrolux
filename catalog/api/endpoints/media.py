@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def photos(response: Response, shareUrl: str | None = None, code: str | None = None):
     """Retorna URLs de fotos categorizadas do OneDrive local ou Microsoft Graph."""
     try:
-        response.headers["Cache-Control"] = "private, max-age=60"
+        response.headers["Cache-Control"] = "private, max-age=300, stale-while-revalidate=600"
         return get_product_photos_payload(code=code, share_url=shareUrl)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -51,7 +51,7 @@ async def photos_batch(response: Response, codes: str | None = None):
     if len(requested_codes) > 30:
         return JSONResponse(status_code=400, content={"error": "too many product codes"})
 
-    response.headers["Cache-Control"] = "private, max-age=60"
+    response.headers["Cache-Control"] = "private, max-age=300, stale-while-revalidate=600"
     try:
         drive_payload = get_google_drive_photos_batch_payload(requested_codes)
     except Exception:

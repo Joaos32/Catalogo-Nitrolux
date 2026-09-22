@@ -56,10 +56,10 @@ def is_configured() -> bool:
 
 
 def _build_file_url(file_id: str) -> str:
-    # Mantem a imagem na mesma origem da API. Isso evita CORS, respeita o
-    # cookie JWT do representante e permite que o backend controle o tamanho
-    # da miniatura antes de entregar o arquivo ao navegador.
-    return f"/catalog/media/google-drive/{file_id}"
+    # O arquivo ja e acessivel sem autenticacao no Drive (a listagem tambem
+    # usa somente a API key). Entregar a miniatura diretamente evita que cada
+    # card abra uma nova funcao da Vercel para fazer o mesmo download.
+    return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
 
 
 def fetch_google_drive_image(file_id: str, size: str = "detail") -> tuple[bytes, str]:
@@ -197,6 +197,14 @@ def _request_named_images(codes: List[str], folder_id: str | None = None) -> Dic
 
 
 @cached
+def _request_named_images_cached(
+    codes: tuple[str, ...], folder_id: str | None = None
+) -> Dict[str, List[Dict]]:
+    """Mantem a busca por codigos no Drive durante o TTL do cache local."""
+    return _request_named_images(list(codes), folder_id=folder_id)
+
+
+@cached
 def list_google_drive_images(folder_id: str | None = None, max_depth: int | None = None) -> List[Dict]:
     root_folder_id = _parse_folder_id(folder_id or _optional_env("CATALOG_GOOGLE_DRIVE_FOLDER_ID"))
     if not root_folder_id:
@@ -256,7 +264,11 @@ def find_images_for_codes(codes: List[str], folder_id: str | None = None) -> Dic
         return {}
 
     try:
-        matches_by_code = _request_named_images(code_list, folder_id=folder_id)
+        cached_matches = _request_named_images_cached(tuple(code_list), folder_id=folder_id)
+        matches_by_code = {
+            code: list(cached_matches.get(code) or [])
+            for code in code_list
+        }
     except Exception:
         matches_by_code = {code: [] for code in code_list}
 
