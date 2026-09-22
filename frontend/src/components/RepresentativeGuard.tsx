@@ -18,6 +18,8 @@ export default function RepresentativeGuard({
     queryKey: ["representative-session"],
     queryFn: fetchRepresentativeSession,
     retry: false,
+    refetchInterval: 2 * 60_000,
+    refetchIntervalInBackground: false,
   });
 
   if (sessionQuery.isLoading) {

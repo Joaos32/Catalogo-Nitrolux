@@ -109,6 +109,9 @@ export default function App(): JSX.Element {
     queryFn: fetchRepresentativeSession,
     retry: false,
     staleTime: 30_000,
+    // Mantem o JWT deslizante ativo enquanto o catalogo esta aberto.
+    refetchInterval: 2 * 60_000,
+    refetchIntervalInBackground: false,
   });
 
   const products = useMemo(() => {
@@ -240,23 +243,30 @@ export default function App(): JSX.Element {
     return targets;
   }, [galleryQuery.isError, productId, selectedProduct, visibleProducts]);
 
-  const photosQuery = useQuery({
-    queryKey: [
+  const photoQueryKey = useMemo(
+    () => [
       "catalog-photos",
       photoTargets
         .map((item) => item.code || item.id)
         .join("|")
         .toLowerCase(),
-    ],
+    ] as const,
+    [photoTargets]
+  );
+
+  const photosQuery = useQuery({
+    queryKey: photoQueryKey,
     enabled: photoTargets.length > 0,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<PhotosByProductId> => {
+      const previousPhotos =
+        queryClient.getQueryData<PhotosByProductId>(photoQueryKey) || {};
       const remoteCodes = photoTargets
         .filter((product) => !hasAnyPhoto(product.photos))
         .map((product) => product.code || product.id);
-      const remotePhotos = await fetchPhotosByCodes(remoteCodes).catch(
-        (): Record<string, ProductPhotos | null> => ({})
-      );
+      // Uma falha de rede deve manter os dados anteriores no React Query.
+      // Nao transforme indisponibilidade temporaria em placeholders.
+      const remotePhotos = await fetchPhotosByCodes(remoteCodes);
       const entries = photoTargets.map((product) => {
         if (hasAnyPhoto(product.photos)) {
           return [product.id, product.photos] as const;
@@ -264,7 +274,13 @@ export default function App(): JSX.Element {
 
         const code = product.code || product.id;
         const payload = remotePhotos[code] || null;
-        const normalized = hasAnyPhoto(payload) ? payload : fallbackPhotos(code);
+        const previous = previousPhotos[product.id] || null;
+        const merged: ProductPhotos = {
+          white_background: payload?.white_background || previous?.white_background || null,
+          ambient: payload?.ambient || previous?.ambient || null,
+          measures: payload?.measures || previous?.measures || null,
+        };
+        const normalized = hasAnyPhoto(merged) ? merged : fallbackPhotos(code);
         return [product.id, normalized] as const;
       });
 

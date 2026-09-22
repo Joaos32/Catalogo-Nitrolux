@@ -412,7 +412,7 @@ export async function fetchPhotosByCodes(codes: string[]): Promise<Record<string
   const normalizedCodes = Array.from(new Set(codes.map((code) => String(code || "").trim()).filter(Boolean)));
   if (normalizedCodes.length === 0) return {};
 
-  const payload = await fetchFromBases<unknown>(
+  const payload = await requestJsonFromBases<unknown>(
     (base) => `${base}/catalog/photos/batch?codes=${encodeURIComponent(normalizedCodes.join(","))}`,
     { credentials: "include" }
   );
@@ -424,7 +424,7 @@ export async function fetchPhotosByCodes(codes: string[]): Promise<Record<string
 }
 
 export async function fetchImagesByCode(code: string): Promise<ProductImagesResponse | null> {
-  const payload = await fetchFromBases<unknown>(
+  const payload = await requestJsonFromBases<unknown>(
     (base) => `${base}/catalog/produtos/${encodeURIComponent(code)}/imagens`,
     {
       credentials: "include",
