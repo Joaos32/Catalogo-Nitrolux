@@ -52,6 +52,7 @@ interface RepresentativeDraft {
   email: string;
   name: string;
   password: string;
+  isAdmin: boolean;
 }
 
 const EMPTY_DRAFT: ErpProductDraft = {
@@ -74,6 +75,7 @@ const EMPTY_REPRESENTATIVE_DRAFT: RepresentativeDraft = {
   email: "",
   name: "",
   password: "",
+  isAdmin: false,
 };
 
 const CORE_PRODUCT_KEYS = new Set(
@@ -182,6 +184,7 @@ function representativeToDraft(user: RepresentativeAdminUser): RepresentativeDra
     email: user.email,
     name: user.name,
     password: "",
+    isAdmin: user.is_admin,
   };
 }
 
@@ -394,6 +397,7 @@ export default function ErpAdminPage(): JSX.Element {
         email: normalizedEmail,
         name: normalizedName,
         password: normalizedPassword || undefined,
+        is_admin: representativeDraft.isAdmin,
       });
       await refreshAdminData();
       setRepresentativeDraft({
@@ -401,6 +405,7 @@ export default function ErpAdminPage(): JSX.Element {
         email: result.user.email,
         name: result.user.name,
         password: "",
+        isAdmin: result.user.is_admin,
       });
       setNotice({
         tone: "success",
@@ -795,6 +800,16 @@ export default function ErpAdminPage(): JSX.Element {
                     <strong>{representativeSummary?.environment_users ?? 0}</strong>
                     <span className="admin-status-meta">Vieram de variáveis de ambiente do servidor.</span>
                   </div>
+                  <div className="admin-status-box">
+                    <span className="admin-status-label">Administradores</span>
+                    <strong>{representativeSummary?.admin_users ?? 0}</strong>
+                    <span className="admin-status-meta">Podem entrar no painel administrativo.</span>
+                  </div>
+                  <div className="admin-status-box">
+                    <span className="admin-status-label">Usuários normais</span>
+                    <strong>{representativeSummary?.representative_users ?? 0}</strong>
+                    <span className="admin-status-meta">Acesso somente ao catálogo.</span>
+                  </div>
                 </div>
                 {passwordResetCode && (
                   <div className="admin-status-box">
@@ -822,6 +837,9 @@ export default function ErpAdminPage(): JSX.Element {
                               <strong>{user.name}</strong>
                               <span className="admin-inline-chip">
                                 {user.managed ? "Painel" : "Ambiente"}
+                              </span>
+                              <span className={`chip ${user.is_admin ? "chip-code" : "chip-category"}`}>
+                                {user.is_admin ? "Administrador" : "Usuário normal"}
                               </span>
                               {!user.managed && <span className="chip chip-category">Somente leitura</span>}
                               {user.password_reset_pending && <span className="chip chip-code">Reset pendente</span>}
@@ -939,6 +957,22 @@ export default function ErpAdminPage(): JSX.Element {
                       }
                       placeholder="Nome exibido no acesso do catálogo"
                     />
+                  </label>
+                  <label className="field field-span-2">
+                    <span>Perfil de acesso</span>
+                    <select
+                      value={representativeDraft.isAdmin ? "admin" : "representative"}
+                      onChange={(event) =>
+                        setRepresentativeDraft((current) => ({
+                          ...current,
+                          isAdmin: event.target.value === "admin",
+                        }))
+                      }
+                      disabled={Boolean(selectedRepresentative && !selectedRepresentative.managed)}
+                    >
+                      <option value="representative">Usuário normal — somente catálogo</option>
+                      <option value="admin">Administrador — catálogo e painel</option>
+                    </select>
                   </label>
                   <label className="field field-span-2">
                     <span>{representativeDraft.currentEmail ? "Nova senha (opcional)" : "Senha de acesso"}</span>

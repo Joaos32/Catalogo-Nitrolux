@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from catalog.api.errors import internal_server_error_response
 from catalog.api.endpoints.catalog import router as catalog_data_router
+from catalog.api.endpoints.integration import router as integration_router
 from catalog.api.endpoints.erp import router as erp_router
 from catalog.api.endpoints.export import router as export_router
 from catalog.api.endpoints.media import router as media_router
@@ -18,6 +19,7 @@ from catalog.local_catalog import IMG_EXTENSIONS
 
 
 router = APIRouter()
+router.include_router(integration_router)
 router.include_router(catalog_data_router)
 router.include_router(media_router)
 router.include_router(erp_router)
@@ -79,6 +81,27 @@ async def local_asset(path: str | None = None):
         return FileResponse(asset_path)
     except Exception as e:
         logger.exception("Error serving local asset: %s", e)
+        return internal_server_error_response()
+
+
+@router.get("/blob/asset", dependencies=[Depends(require_representative_access)])
+async def blob_asset(blobPath: str | None = None):
+    """Serve uma imagem privada armazenada no Vercel Blob."""
+    if not blobPath:
+        return JSONResponse(status_code=400, content={"error": "missing blobPath query parameter"})
+    try:
+        from .vercel_blob_media import get_asset
+
+        asset = get_asset(blobPath)
+        if asset is None:
+            return JSONResponse(status_code=404, content={"error": "asset not found"})
+        return Response(
+            content=asset.content,
+            media_type=asset.content_type or "application/octet-stream",
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+    except Exception as exc:
+        logger.exception("Error serving Vercel Blob asset: %s", exc)
         return internal_server_error_response()
 
 

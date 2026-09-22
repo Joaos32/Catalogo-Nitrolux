@@ -59,6 +59,29 @@ export function absolutizeApiUrl(value: string): string {
   return url;
 }
 
+export type CatalogImageSize = "thumb" | "card" | "detail";
+
+export function optimizeCatalogImageUrl(value: string | null | undefined, size: CatalogImageSize): string {
+  const url = absolutizeApiUrl(String(value || ""));
+  if (!url) return "";
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const sizeWidths: Record<CatalogImageSize, number> = { thumb: 320, card: 640, detail: 1000 };
+    const isCatalogProxy = parsed.pathname.includes("/catalog/media/google-drive/");
+    const isDriveThumbnail =
+      parsed.hostname.toLowerCase() === "drive.google.com" && parsed.pathname === "/thumbnail";
+
+    if (!isCatalogProxy && !isDriveThumbnail) {
+      return url;
+    }
+    parsed.searchParams.set(isCatalogProxy ? "size" : "sz", isCatalogProxy ? size : `w${sizeWidths[size]}`);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function buildCatalogExportUrl(options: CatalogExportOptions): string {
   return buildCatalogExportUrlForBase(getActiveApiOrigin(), options);
 }
@@ -383,6 +406,21 @@ export async function fetchPhotosByCode(code: string): Promise<ProductPhotos | n
     }
   );
   return normalizePhotos(payload);
+}
+
+export async function fetchPhotosByCodes(codes: string[]): Promise<Record<string, ProductPhotos | null>> {
+  const normalizedCodes = Array.from(new Set(codes.map((code) => String(code || "").trim()).filter(Boolean)));
+  if (normalizedCodes.length === 0) return {};
+
+  const payload = await fetchFromBases<unknown>(
+    (base) => `${base}/catalog/photos/batch?codes=${encodeURIComponent(normalizedCodes.join(","))}`,
+    { credentials: "include" }
+  );
+  if (!isRecord(payload)) return {};
+
+  return Object.fromEntries(
+    Object.entries(payload).map(([code, value]) => [code, normalizePhotos(value)] as const)
+  );
 }
 
 export async function fetchImagesByCode(code: string): Promise<ProductImagesResponse | null> {

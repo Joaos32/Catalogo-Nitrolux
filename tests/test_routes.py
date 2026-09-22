@@ -1,6 +1,7 @@
+import csv
 import pytest
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 from zipfile import ZipFile
 from fastapi.testclient import TestClient
 from app import app
@@ -136,6 +137,15 @@ def test_local_products_route(monkeypatch):
     assert data[0]['VendaMes'] == 87
     assert data[0]['Embalagem'] == '6'
     assert data[0]['CaixaMaster'] == '24'
+    assert rv.headers['etag'].startswith('"')
+    assert rv.headers['cache-control'] == 'private, no-cache'
+
+    not_modified = client.get(
+        '/catalog/local/produtos',
+        headers={'If-None-Match': rv.headers['etag']},
+    )
+    assert not_modified.status_code == 304
+    assert not_modified.content == b''
 
 
 def test_representative_admin_routes_manage_users(monkeypatch, tmp_path):
@@ -482,11 +492,47 @@ def test_catalog_export_csv(monkeypatch):
     rv = client.get('/catalog/export', params={'format': 'csv'})
     assert rv.status_code == 200
     assert rv.headers.get('content-type', '').startswith('text/csv')
-    assert 'attachment; filename="catalogo-produtos.csv"' == rv.headers.get('content-disposition')
+    assert 'attachment; filename="catalogo-produtos-organizado.csv"' == rv.headers.get('content-disposition')
     payload = rv.content.decode('utf-8-sig')
-    assert 'Codigo,Nome,Categoria' in payload
+    assert 'Codigo;Nome;Categoria' in payload
     assert '9911' in payload
     assert 'Produto Exportavel' in payload
+    assert rv.headers['cache-control'] == 'private, no-cache'
+    assert rv.headers['etag'].startswith('"')
+
+    not_modified = client.get(
+        '/catalog/export',
+        params={'format': 'csv'},
+        headers={'If-None-Match': rv.headers['etag']},
+    )
+    assert not_modified.status_code == 304
+    assert not_modified.content == b''
+
+
+def test_catalog_export_csv_uses_excel_pt_br_columns(monkeypatch):
+    monkeypatch.setattr(
+        'catalog.onedrive.list_local_products',
+        lambda: [
+            {
+                'Codigo': '5966',
+                'Nome': 'LAMPADA LED BULBO T100 50W 6500K',
+                'Categoria': 'LAMPADA',
+                'Descricao': 'Produto com vírgula, acento e 50W',
+            }
+        ],
+    )
+
+    client = TestClient(app)
+    rv = client.get('/catalog/export', params={'format': 'csv', 'code': '5966'})
+    payload = rv.content.decode('utf-8-sig')
+    rows = list(csv.DictReader(StringIO(payload), delimiter=';'))
+
+    assert payload.startswith('Codigo;Nome;Categoria;Descricao')
+    assert '\r\n' in payload
+    assert len(rows) == 1
+    assert rows[0]['Codigo'] == '5966'
+    assert rows[0]['Descricao'] == 'Produto com vírgula, acento e 50W'
+    assert rv.headers.get('content-disposition') == 'attachment; filename="produto-5966-organizado.csv"'
 
 
 def test_catalog_export_json_filters_brand(monkeypatch):
@@ -561,8 +607,54 @@ def test_catalog_export_technical_sheet_single_product(monkeypatch):
 
     assert rv.status_code == 200
     assert rv.headers.get('content-type', '').startswith('application/pdf')
-    assert 'attachment; filename="ficha-tecnica-9911.pdf"' == rv.headers.get('content-disposition')
+    assert 'attachment; filename="ficha-tecnica-9911-alta-resolucao-v2.pdf"' == rv.headers.get('content-disposition')
     assert rv.content[:5] == b'%PDF-'
+
+
+def test_catalog_export_uses_catalog_media_enrichment(monkeypatch):
+    monkeypatch.setattr(
+        'catalog.onedrive.list_local_products',
+        lambda: [{'Codigo': '3009', 'Nome': 'Produto com foto', 'Categoria': 'PENDENTE'}],
+    )
+    monkeypatch.setattr(
+        'catalog.cdn_media.enrich_products_with_photos',
+        lambda products: [{**products[0], 'URLFoto': 'https://cdn.example/3009_1.jpg'}],
+    )
+    monkeypatch.setattr('catalog.vercel_blob_media.enrich_products_with_photos', lambda products: products)
+
+    from catalog import exporter
+
+    products = exporter._load_products()
+
+    assert products[0]['URLFoto'] == 'https://cdn.example/3009_1.jpg'
+
+
+def test_technical_sheet_deduplicates_equivalent_spec_labels():
+    from catalog import exporter
+
+    specs = 'Potencia: 45W | POTENCIA(W): 45W | Tensao: Bivolt | TENSAO(V): Bivolt'
+    rows = exporter._technical_sheet_rows({}, specs)
+    enriched_rows = list(rows)
+    seen = {exporter._canonical_spec_key(label) for label, _ in enriched_rows}
+    for label, value in exporter._parse_specs_pairs(specs):
+        key = exporter._canonical_spec_key(label)
+        if key not in seen:
+            enriched_rows.append((label, value))
+            seen.add(key)
+
+    assert [exporter._canonical_spec_key(label) for label, _ in enriched_rows].count('potencia') == 1
+    assert [exporter._canonical_spec_key(label) for label, _ in enriched_rows].count('tensao') == 1
+
+
+def test_pdf_uses_bundled_font():
+    from catalog import exporter
+
+    regular = exporter._load_font(20)
+    bold = exporter._load_font(20, bold=True)
+
+    assert exporter.BUNDLED_FONT_PATH.is_file()
+    assert 'Noto Sans' in regular.getname()[0]
+    assert bold.getname()[1] == 'Bold'
 
 
 def test_catalog_export_technical_sheet_requires_code(monkeypatch):

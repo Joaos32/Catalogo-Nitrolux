@@ -56,7 +56,33 @@ def is_configured() -> bool:
 
 
 def _build_file_url(file_id: str) -> str:
-    return f"https://drive.google.com/uc?export=view&id={file_id}"
+    return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
+
+
+def fetch_google_drive_image(file_id: str, size: str = "detail") -> tuple[bytes, str]:
+    """Baixa uma imagem do Drive para ser servida pelo próprio catálogo."""
+    cleaned_id = str(file_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,200}", cleaned_id):
+        raise ValueError("invalid Google Drive file id")
+
+    requested_size = str(size or "detail").strip().lower()
+    thumbnail_widths = {"thumb": 320, "card": 640}
+    if requested_size in thumbnail_widths:
+        source_url = (
+            "https://drive.google.com/thumbnail"
+            f"?id={cleaned_id}&sz=w{thumbnail_widths[requested_size]}"
+        )
+    else:
+        source_url = f"https://drive.google.com/uc?export=view&id={cleaned_id}"
+
+    upstream = requests.get(source_url, timeout=20)
+    upstream.raise_for_status()
+
+    media_type = (upstream.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if not media_type.startswith("image/"):
+        raise ValueError("Google Drive file is not an image")
+
+    return upstream.content, media_type
 
 
 def _is_image_file(item: Dict) -> bool:
@@ -106,6 +132,65 @@ def _request_children(folder_id: str, api_key: str | None) -> Iterable[Dict]:
         page_token = payload.get("nextPageToken")
         if not page_token:
             break
+
+
+def _escape_query_value(value: str) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _request_named_images(codes: List[str], folder_id: str | None = None) -> Dict[str, List[Dict]]:
+    root_folder_id = _parse_folder_id(folder_id or _optional_env("CATALOG_GOOGLE_DRIVE_FOLDER_ID"))
+    api_key = _optional_env("CATALOG_GOOGLE_DRIVE_API_KEY")
+    normalized_codes = list(dict.fromkeys(str(code or "").strip() for code in codes if str(code or "").strip()))
+    matches: Dict[str, List[Dict]] = {code: [] for code in normalized_codes}
+    if not root_folder_id or not api_key or not normalized_codes:
+        return matches
+
+    name_terms = " or ".join(
+        f"name contains '{_escape_query_value(code)}'" for code in normalized_codes
+    )
+    query = f"'{_escape_query_value(root_folder_id)}' in parents and trashed = false and ({name_terms})"
+    page_token = None
+
+    while True:
+        params = {
+            "q": query,
+            "fields": "nextPageToken, files(id, name, mimeType)",
+            "pageSize": 1000,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+            "key": api_key,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = requests.get(GOOGLE_DRIVE_FILES_URL, params=params, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        for item in payload.get("files") or []:
+            if not isinstance(item, dict) or not _is_image_file(item):
+                continue
+            name = str(item.get("name") or "")
+            file_id = str(item.get("id") or "").strip()
+            if not file_id:
+                continue
+            for code in normalized_codes:
+                if not _matches_code(name, code):
+                    continue
+                matches[code].append(
+                    {
+                        "id": file_id,
+                        "name": name,
+                        "mimeType": str(item.get("mimeType") or ""),
+                        "url": _build_file_url(file_id),
+                    }
+                )
+
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+
+    return matches
 
 
 @cached
@@ -159,37 +244,72 @@ def list_google_drive_images(folder_id: str | None = None, max_depth: int | None
 
 
 def find_images_for_code(code: str, folder_id: str | None = None) -> List[Dict]:
-    code_text = str(code or "").strip()
-    if not code_text:
-        return []
+    return find_images_for_codes([code], folder_id=folder_id).get(str(code or "").strip(), [])
 
-    matches = [
-        item
-        for item in list_google_drive_images(folder_id=folder_id)
-        if _matches_code(str(item.get("name") or ""), code_text)
-    ]
-    matches.sort(key=lambda item: _image_sort_key(item, code_text))
 
-    return [
-        {
-            "name": str(item.get("name") or ""),
-            "variant": _match_filename(str(item.get("name") or ""), code_text) or 0,
-            "url": str(item.get("url") or ""),
-        }
-        for item in matches
-    ]
+def find_images_for_codes(codes: List[str], folder_id: str | None = None) -> Dict[str, List[Dict]]:
+    code_list = list(dict.fromkeys(str(code or "").strip() for code in codes if str(code or "").strip()))
+    if not code_list:
+        return {}
+
+    try:
+        matches_by_code = _request_named_images(code_list, folder_id=folder_id)
+    except Exception:
+        matches_by_code = {code: [] for code in code_list}
+
+    # A successful Drive query can still return no direct-child match. This is
+    # common for catalogs whose photos are organized in subfolders, so use the
+    # recursive index for only the missing codes.
+    missing_codes = [code for code in code_list if not matches_by_code.get(code)]
+    if missing_codes:
+        try:
+            recursive_images = list_google_drive_images(folder_id=folder_id)
+        except Exception:
+            recursive_images = []
+        for code in missing_codes:
+            matches_by_code[code] = [
+                item
+                for item in recursive_images
+                if _matches_code(str(item.get("name") or ""), code)
+            ]
+
+    result: Dict[str, List[Dict]] = {}
+    for code in code_list:
+        matches = matches_by_code.get(code, [])
+        matches.sort(key=lambda item: _image_sort_key(item, code))
+        result[code] = [
+            {
+                "name": str(item.get("name") or ""),
+                "variant": _match_filename(str(item.get("name") or ""), code) or 0,
+                "url": str(item.get("url") or ""),
+            }
+            for item in matches
+        ]
+    return result
 
 
 def categorize_photos_for_code(code: str, folder_id: str | None = None) -> Dict[str, str | None]:
-    photos: Dict[str, str | None] = {
-        "white_background": None,
-        "ambient": None,
-        "measures": None,
-    }
+    return categorize_photos_for_codes([code], folder_id=folder_id).get(
+        str(code or "").strip(),
+        {"white_background": None, "ambient": None, "measures": None},
+    )
 
-    for image in find_images_for_code(code, folder_id=folder_id):
-        variant = _classify_variant(str(image.get("name") or ""), code)
-        if variant in photos and not photos[variant]:
-            photos[variant] = str(image.get("url") or "") or None
 
-    return photos
+def categorize_photos_for_codes(codes: List[str], folder_id: str | None = None) -> Dict[str, Dict[str, str | None]]:
+    images_by_code = find_images_for_codes(codes, folder_id=folder_id)
+    categorized: Dict[str, Dict[str, str | None]] = {}
+
+    for code, images in images_by_code.items():
+        photos: Dict[str, str | None] = {
+            "white_background": None,
+            "ambient": None,
+            "measures": None,
+        }
+
+        for image in images:
+            variant = _classify_variant(str(image.get("name") or ""), code)
+            if variant in photos and not photos[variant]:
+                photos[variant] = str(image.get("url") or "") or None
+        categorized[code] = photos
+
+    return categorized

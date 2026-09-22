@@ -11,41 +11,6 @@ import type {
 } from "../types";
 
 export const DEMO_PRODUCTS: ProductRecord[] = [];
-const HOME_SHOWCASE_CODES = [
-  "6324",
-  "6323",
-  "4002",
-  "5055",
-  "3214",
-  "3215",
-  "5991",
-  "6169",
-  "5030",
-  "3257",
-];
-const HOME_SHOWCASE_RANK = new Map(HOME_SHOWCASE_CODES.map((code, index) => [normalizeText(code), index]));
-const HOME_SHOWCASE_CATEGORY_SCORE: Record<string, number> = {
-  "ILUMINACAO DECORATIVA": 420,
-  "LAMPADAS E FITAS": 210,
-  "ILUMINACAO EXTERNA E PUBLICA": 200,
-  "ILUMINACAO TECNICA": 160,
-  "COMPONENTES E ACESSORIOS": -80,
-  "OUTROS ITENS ERP": -220,
-  "UTILIDADES E OPERACAO": -250,
-};
-const HOME_SHOWCASE_KEYWORDS: Array<[string, number]> = [
-  ["pendente", 140],
-  ["lustre", 140],
-  ["arandela", 110],
-  ["filamento", 120],
-  ["abajur", 80],
-  ["solar", 70],
-  ["corda", 50],
-  ["ambar", 80],
-  ["cobre", 70],
-  ["cristal", 60],
-  ["classic", 45],
-];
 
 export function normalizeText(value: unknown): string {
   return String(value ?? "")
@@ -88,98 +53,70 @@ function hasVariantMarker(value: string, variant: number): boolean {
 function getVisualPreferenceRank(value: string): number {
   const normalized = String(value || "").toLowerCase();
   if (!normalized) return 4;
-  if (normalized.includes("ambient") || hasVariantMarker(normalized, 3)) {
+
+  // A numeracao do Drive define a ordem principal da apresentacao:
+  // _1 e a capa, seguido por _2 e _3.
+  if (hasVariantMarker(normalized, 1)) {
     return 0;
   }
-  if (normalized.includes("branco") || normalized.includes("white") || hasVariantMarker(normalized, 1)) {
+  if (hasVariantMarker(normalized, 2)) {
     return 1;
   }
-  if (normalized.includes("medid") || hasVariantMarker(normalized, 2)) {
+  if (hasVariantMarker(normalized, 3)) {
     return 2;
   }
-  if (normalized.includes("descri") || normalized.includes("description")) {
+  if (normalized.includes("branco") || normalized.includes("white")) {
     return 3;
   }
-  return 4;
+  if (normalized.includes("medid")) {
+    return 4;
+  }
+  if (normalized.includes("ambient") || normalized.includes("ambiente")) {
+    return 5;
+  }
+  if (normalized.includes("descri") || normalized.includes("description")) {
+    return 6;
+  }
+  return 7;
 }
 
 export function getPrimaryProductImage(photos: ProductPhotos | null | undefined, cover = ""): string {
-  return photos?.ambient || photos?.white_background || photos?.measures || cover || "";
+  return photos?.white_background || photos?.measures || photos?.ambient || cover || "";
 }
 
-function hasRealProductImage(url: string | null | undefined): boolean {
-  const normalized = normalizeText(url);
-  return Boolean(normalized && !normalized.includes("placehold.co") && !normalized.includes("sem+imagem") && !normalized.includes("sem+foto"));
+function normalizePhotoReference(value: unknown): string {
+  const url = absolutizeApiUrl(String(value ?? "").trim());
+  if (!url) return "";
+
+  let marker = url.toLowerCase().replace(/\+/g, " ");
+  try {
+    marker = decodeURIComponent(marker);
+  } catch {
+    // Mantém a referência original quando a URL não possui encoding válido.
+  }
+
+  if (
+    marker.includes("placehold.co") ||
+    marker.includes("placeholder") ||
+    marker.includes("sem foto") ||
+    marker.includes("sem imagem")
+  ) {
+    return "";
+  }
+
+  return url;
 }
 
-function getHomeShowcaseScore(item: CatalogProduct): number {
-  let score = HOME_SHOWCASE_CATEGORY_SCORE[item.category] ?? 0;
-
-  if (hasRealProductImage(item.cover)) {
-    score += 140;
-  }
-  if (hasRealProductImage(item.photos?.white_background || "")) {
-    score += 80;
-  }
-  if (hasRealProductImage(item.photos?.ambient || "")) {
-    score += 170;
-  }
-  if (hasRealProductImage(item.photos?.measures || "")) {
-    score += 140;
-  }
-
-  const normalizedName = normalizeText(item.name);
-  for (const [keyword, bonus] of HOME_SHOWCASE_KEYWORDS) {
-    if (normalizedName.includes(keyword)) {
-      score += bonus;
-    }
-  }
-
-  return score;
-}
-
-function getRealImageCount(item: CatalogProduct): number {
-  return [
-    item.cover,
-    item.photos?.white_background || "",
-    item.photos?.ambient || "",
-    item.photos?.measures || "",
-  ].filter((url) => hasRealProductImage(url)).length;
-}
-
-export function getHomeShowcaseProducts(products: CatalogProduct[], limit: number): CatalogProduct[] {
+export function getRandomShowcaseProducts(products: CatalogProduct[], limit: number): CatalogProduct[] {
   const safeLimit = Math.max(limit, 0);
-  const hasMonthlySalesRanking = products.some((item) => item.monthlySales > 0);
+  const randomized = products.slice();
 
-  return products
-    .slice()
-    .sort((left, right) => {
-      if (hasMonthlySalesRanking) {
-        const monthlySalesDiff = right.monthlySales - left.monthlySales;
-        if (monthlySalesDiff !== 0) {
-          return monthlySalesDiff;
-        }
-      }
+  for (let index = randomized.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [randomized[index], randomized[randomIndex]] = [randomized[randomIndex], randomized[index]];
+  }
 
-      const leftRank = HOME_SHOWCASE_RANK.get(normalizeText(left.code)) ?? Number.MAX_SAFE_INTEGER;
-      const rightRank = HOME_SHOWCASE_RANK.get(normalizeText(right.code)) ?? Number.MAX_SAFE_INTEGER;
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-
-      const scoreDiff = getHomeShowcaseScore(right) - getHomeShowcaseScore(left);
-      if (scoreDiff !== 0) {
-        return scoreDiff;
-      }
-
-      const imageCountDiff = getRealImageCount(right) - getRealImageCount(left);
-      if (imageCountDiff !== 0) {
-        return imageCountDiff;
-      }
-
-      return left.name.localeCompare(right.name, "pt-BR");
-    })
-    .slice(0, safeLimit);
+  return randomized.slice(0, safeLimit);
 }
 
 function getField(item: ProductRecord | null | undefined, aliases: string[], fallback: unknown = ""): unknown {
@@ -445,15 +382,15 @@ export function normalizeProduct(item: ProductRecord, index: number): CatalogPro
   const composedDescription = buildSiteDescription(item, category, specs, fallbackDescription);
 
   const embeddedPhotos: ProductPhotos = {
-    white_background: absolutizeApiUrl(
-      String(getField(item, ["FotoBranco", "white_background", "WhiteBackground"], ""))
+    white_background: normalizePhotoReference(
+      getField(item, ["FotoBranco", "white_background", "WhiteBackground"], "")
     ),
-    ambient: absolutizeApiUrl(String(getField(item, ["FotoAmbient", "ambient", "Ambient"], ""))),
-    measures: absolutizeApiUrl(String(getField(item, ["FotoMedidas", "measures", "Measures"], ""))),
+    ambient: normalizePhotoReference(getField(item, ["FotoAmbient", "ambient", "Ambient"], "")),
+    measures: normalizePhotoReference(getField(item, ["FotoMedidas", "measures", "Measures"], "")),
   };
 
   const hasEmbeddedPhotos = hasAnyPhoto(embeddedPhotos);
-  const rawCover = absolutizeApiUrl(String(getField(item, ["URLFoto", "Imagem", "Image", "Foto", "URL"], "")));
+  const rawCover = normalizePhotoReference(getField(item, ["URLFoto", "Imagem", "Image", "Foto", "URL"], ""));
   const id = `item-${index + 1}`;
 
   return {
@@ -489,7 +426,7 @@ export function fallbackPhotos(code: string): ProductPhotos {
 function imageOrderKey(name: string): Array<number | string> {
   const value = String(name || "").toLowerCase();
   const visualRank = getVisualPreferenceRank(value);
-  if (visualRank < 4) {
+  if (visualRank < 7) {
     return [visualRank, value];
   }
   if (/^\d+\s*-\s*[^\d]/.test(value)) {
@@ -551,9 +488,9 @@ export function buildGalleryEntries(
   }
 
   const candidates = [
-    { label: "Ambientada", url: photos?.ambient || "" },
     { label: "Fundo branco", url: photos?.white_background || "" },
     { label: "Medidas", url: photos?.measures || "" },
+    { label: "Ambientada", url: photos?.ambient || "" },
     { label: "Capa", url: item.cover },
   ];
 

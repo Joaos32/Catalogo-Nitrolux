@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# local server and test tooling
+uvicorn[standard]
+httpx
+pytest

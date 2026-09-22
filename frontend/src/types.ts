@@ -176,6 +176,8 @@ export interface RepresentativeUser {
 export interface RepresentativeAdminUser extends RepresentativeUser {
   managed: boolean;
   source: "managed" | "environment";
+  is_admin: boolean;
+  role: "admin" | "representative";
   created_at?: string | null;
   updated_at?: string | null;
   password_reset_expires_at?: string | null;
@@ -187,12 +189,15 @@ export interface RepresentativeAdminListResponse {
   total_users: number;
   managed_users: number;
   environment_users: number;
+  admin_users: number;
+  representative_users: number;
 }
 
 export interface RepresentativeAdminSavePayload {
   email: string;
   name: string;
   password?: string;
+  is_admin?: boolean;
 }
 
 export interface RepresentativeAdminSaveResponse extends RepresentativeAdminListResponse {

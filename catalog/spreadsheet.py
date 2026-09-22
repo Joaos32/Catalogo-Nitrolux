@@ -3,10 +3,11 @@
 Atualmente suporta Google Sheets publicas por exportacao em CSV.
 """
 
+import csv
 import re
 import requests
-import pandas as pd
-from urllib.parse import urlparse, parse_qs
+from io import StringIO
+from typing import Dict, List
 
 
 def _extract_sheet_id(url: str) -> str:
@@ -18,8 +19,8 @@ def _extract_sheet_id(url: str) -> str:
     return m.group(1)
 
 
-def fetch_sheet(sheet_url: str) -> pd.DataFrame:
-    """Busca dados de uma Google Sheet (publica) e retorna como DataFrame.
+def fetch_sheet(sheet_url: str) -> List[Dict[str, str]]:
+    """Busca dados de uma Google Sheet publica e retorna registros.
 
     Parametros:
         sheet_url: URL completa da planilha.
@@ -43,9 +44,10 @@ def fetch_sheet(sheet_url: str) -> pd.DataFrame:
             "The sheet may not be public or the URL may be invalid."
         )
     
-    # O pandas consegue ler diretamente de um StringIO.
-    from io import StringIO
     try:
-        return pd.read_csv(StringIO(resp.text))
-    except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        reader = csv.DictReader(StringIO(resp.text))
+        if not reader.fieldnames:
+            raise ValueError("Google Sheets returned an empty CSV")
+        return [dict(row) for row in reader]
+    except (csv.Error, UnicodeError) as e:
         raise ValueError(f"Failed to parse CSV from Google Sheets: {e}")

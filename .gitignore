@@ -17,6 +17,7 @@ reports/representative_users.json
 .vscode/
 
 # Runtime logs and process output
+/logs/
 *.log
 *.err
 *.out
@@ -27,6 +28,10 @@ reports/representative_users.json
 .codex-*.log
 .codex-*.out.log
 .codex-*.err.log
+/logs/app/*
+/logs/tunnel/*
+!/logs/app/.gitkeep
+!/logs/tunnel/.gitkeep
 
 frontend/node_modules/
 frontend/dist/
@@ -53,3 +58,6 @@ reports/.pytest*/
 reports/POSICAO_ESTOQUE.xlsx
 reports/codigos_sem_foto.csv
 reports/relatorio_fotos_estoque_4digitos.csv
+
+.vercel
+.env*

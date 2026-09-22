@@ -3,7 +3,7 @@
 import ExportActions from "./ExportActions";
 import type { CatalogExportFormat, CatalogProduct, GalleryEntry, ProductPhotos } from "../types";
 import { DETAIL_FALLBACK_IMAGE, THUMB_FALLBACK_IMAGE, setFallbackImage } from "../lib/catalog-core";
-import { downloadImageFile } from "../lib/catalog-api";
+import { downloadImageFile, optimizeCatalogImageUrl } from "../lib/catalog-api";
 import { buildGalleryEntries, findPreferredGalleryIndex } from "../lib/catalog-products";
 
 interface ProductDetailProps {
@@ -69,11 +69,12 @@ export default function ProductDetail({
       <div className="detail-layout">
         <div className="detail-media">
           <img
-            src={activeImage?.url || DETAIL_FALLBACK_IMAGE}
+            src={optimizeCatalogImageUrl(activeImage?.url, "detail") || DETAIL_FALLBACK_IMAGE}
             alt={item.name || "Produto"}
             width="1200"
             height="900"
             decoding="async"
+            fetchPriority="high"
             onError={(event) => setFallbackImage(event, DETAIL_FALLBACK_IMAGE)}
           />
         </div>
@@ -138,7 +139,7 @@ export default function ProductDetail({
             aria-label={`Selecionar ${image.label}`}
           >
             <img
-              src={image.url || THUMB_FALLBACK_IMAGE}
+              src={optimizeCatalogImageUrl(image.url, "thumb") || THUMB_FALLBACK_IMAGE}
               alt={image.label}
               width="240"
               height="240"

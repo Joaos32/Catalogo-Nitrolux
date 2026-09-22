@@ -9,7 +9,7 @@ import {
   downloadCatalogExport,
   fetchRepresentativeSession,
   fetchImagesByCode,
-  fetchPhotosByCode,
+  fetchPhotosByCodes,
   fetchProducts,
   logoutRepresentative,
 } from "./lib/catalog-api";
@@ -17,7 +17,7 @@ import {
   DEMO_PRODUCTS,
   buildGalleryEntries,
   fallbackPhotos,
-  getHomeShowcaseProducts,
+  getRandomShowcaseProducts,
   hasAnyPhoto,
   normalizeProduct,
   normalizeText,
@@ -62,11 +62,6 @@ const BRAND_META: Record<
     exportTitle: "Exportar recorte Pienza",
   },
 };
-function formatDisplayNumber(value: number): string {
-  const maximumFractionDigits = Number.isInteger(value) ? 0 : 1;
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits }).format(value);
-}
-
 function useCatalogProducts() {
   return useQuery({
     queryKey: ["catalog-products"],
@@ -211,7 +206,7 @@ export default function App(): JSX.Element {
 
   const visibleProducts = useMemo(() => {
     if (isHomeShowcase) {
-      return getHomeShowcaseProducts(filteredProducts, INITIAL_PRODUCTS_LIMIT);
+      return getRandomShowcaseProducts(filteredProducts, INITIAL_PRODUCTS_LIMIT);
     }
     return filteredProducts.slice(0, visibleProductCount);
   }, [filteredProducts, isHomeShowcase, visibleProductCount]);
@@ -230,11 +225,20 @@ export default function App(): JSX.Element {
   }, [selectedProduct, visibleProducts]);
 
   const photoTargets = useMemo(() => {
-    if (!selectedProduct || hasAnyPhoto(selectedProduct.photos)) {
+    if (productId && !galleryQuery.isError) {
       return [];
     }
-    return [selectedProduct];
-  }, [selectedProduct]);
+
+    const targets = visibleProducts.filter((item) => !hasAnyPhoto(item.photos));
+    if (
+      selectedProduct &&
+      !hasAnyPhoto(selectedProduct.photos) &&
+      !targets.some((item) => item.id === selectedProduct.id)
+    ) {
+      targets.push(selectedProduct);
+    }
+    return targets;
+  }, [galleryQuery.isError, productId, selectedProduct, visibleProducts]);
 
   const photosQuery = useQuery({
     queryKey: [
@@ -247,18 +251,22 @@ export default function App(): JSX.Element {
     enabled: photoTargets.length > 0,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<PhotosByProductId> => {
-      const entries = await Promise.all(
-        photoTargets.map(async (product) => {
-          if (hasAnyPhoto(product.photos)) {
-            return [product.id, product.photos] as const;
-          }
-
-          const code = product.code || product.id;
-          const payload = await fetchPhotosByCode(code);
-          const normalized = hasAnyPhoto(payload) ? payload : fallbackPhotos(code);
-          return [product.id, normalized] as const;
-        })
+      const remoteCodes = photoTargets
+        .filter((product) => !hasAnyPhoto(product.photos))
+        .map((product) => product.code || product.id);
+      const remotePhotos = await fetchPhotosByCodes(remoteCodes).catch(
+        (): Record<string, ProductPhotos | null> => ({})
       );
+      const entries = photoTargets.map((product) => {
+        if (hasAnyPhoto(product.photos)) {
+          return [product.id, product.photos] as const;
+        }
+
+        const code = product.code || product.id;
+        const payload = remotePhotos[code] || null;
+        const normalized = hasAnyPhoto(payload) ? payload : fallbackPhotos(code);
+        return [product.id, normalized] as const;
+      });
 
       return Object.fromEntries(entries) as PhotosByProductId;
     },
@@ -301,10 +309,6 @@ export default function App(): JSX.Element {
   const loadedPhotoCount = Object.keys(photosByProductId).length;
   const hiddenProductsCount = Math.max(filteredProducts.length - visibleProducts.length, 0);
   const canLoadMoreProducts = !isHomeShowcase && hiddenProductsCount > 0;
-  const homeShowcaseHasMonthlySales = isHomeShowcase && visibleProducts.some((item) => item.monthlySales > 0);
-  const homeShowcaseSalesTotal = homeShowcaseHasMonthlySales
-    ? visibleProducts.reduce((total, item) => total + item.monthlySales, 0)
-    : 0;
   const representativeName =
     representativeSessionQuery.data?.user?.name ||
     representativeSessionQuery.data?.user?.email ||
@@ -449,9 +453,7 @@ export default function App(): JSX.Element {
               title={brandMeta.exportTitle}
               note={
                 isHomeShowcase
-                  ? homeShowcaseHasMonthlySales
-                    ? `${visibleProducts.length} produtos no ranking mensal e ${filteredProducts.length} na ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
-                    : `${visibleProducts.length} produtos em destaque agora e ${filteredProducts.length} na ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
+                  ? `${visibleProducts.length} produtos sorteados e ${filteredProducts.length} na ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
                   : `${visibleProducts.length} itens exibidos agora e ${filteredProducts.length} no recorte atual da ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
               }
               onExport={exportCatalog}
@@ -463,9 +465,7 @@ export default function App(): JSX.Element {
                 ? "Carregando produtos..."
                 : hiddenProductsCount > 0
                   ? isHomeShowcase
-                    ? homeShowcaseHasMonthlySales
-                      ? `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo os ${visibleProducts.length} mais vendidos do mês`
-                      : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo ${visibleProducts.length} produtos em destaque`
+                    ? `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo ${visibleProducts.length} produtos sorteados`
                     : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo ${visibleProducts.length} na grade inicial`
                   : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}`}
             </p>
@@ -480,26 +480,18 @@ export default function App(): JSX.Element {
               <article className="stat-card">
                 <strong>{visibleProducts.length}</strong>
                 <span>
-                  {isHomeShowcase
-                    ? homeShowcaseHasMonthlySales
-                      ? `${brandMeta.tabLabel} no top do mês`
-                      : `${brandMeta.tabLabel} em destaque`
-                    : "Itens exibidos"}
+                  {isHomeShowcase ? "Produtos na roleta" : "Itens exibidos"}
                 </span>
               </article>
               <article className="stat-card">
-                <strong>{homeShowcaseHasMonthlySales ? formatDisplayNumber(homeShowcaseSalesTotal) : visibleCategoryCount}</strong>
+                <strong>{visibleCategoryCount}</strong>
                 <span>
-                  {isHomeShowcase
-                    ? homeShowcaseHasMonthlySales
-                      ? "Vendas somadas no top 15"
-                      : "Categorias em destaque"
-                    : "Categorias no recorte"}
+                  {isHomeShowcase ? "Categorias sorteadas" : "Categorias no recorte"}
                 </span>
               </article>
               <article className="stat-card">
-                <strong>{homeShowcaseHasMonthlySales ? visibleCategoryCount : loadedPhotoCount}</strong>
-                <span>{homeShowcaseHasMonthlySales ? "Categorias no top 15" : "Galerias prontas"}</span>
+                <strong>{loadedPhotoCount}</strong>
+                <span>{isHomeShowcase ? "Galerias na roleta" : "Galerias prontas"}</span>
               </article>
             </section>
 
@@ -509,20 +501,10 @@ export default function App(): JSX.Element {
               </section>
             ) : visibleProducts.length > 0 ? (
               <>
-                {isHomeShowcase && homeShowcaseHasMonthlySales && (
-                  <section className="showcase-hero-panel" aria-label="Mais vendidos do mês">
-                    <p className="showcase-hero-kicker">Ranking do mês</p>
-                    <h2>15 produtos mais vendidos</h2>
-                    <p>
-                      A seleção inicial agora prioriza a coluna de venda mensal do relatório de estoque mais
-                      recente para destacar o que mais gira na {brandMeta.resultLabel}.
-                    </p>
-                  </section>
-                )}
                 {isHomeShowcase && (
                   <section
                     className="showcase-category-strip"
-                    aria-label={homeShowcaseHasMonthlySales ? "Categorias presentes no top 15" : "Categorias em destaque"}
+                    aria-label="Categorias dos produtos sorteados"
                   >
                     {showcaseCategories.map((entry) => (
                       <span key={`${entry.name}-${entry.count}`} className="showcase-category-pill">
@@ -558,8 +540,6 @@ export default function App(): JSX.Element {
                         item={item}
                         photos={photosByProductId[item.id]}
                         index={index}
-                        showSalesHighlight={homeShowcaseHasMonthlySales}
-                        salesRank={homeShowcaseHasMonthlySales ? index + 1 : undefined}
                         onOpen={() => openProduct(item)}
                       />
                     ))}

@@ -8,15 +8,17 @@ import secrets
 import time
 from datetime import datetime, timezone
 from typing import List
-from fastapi import APIRouter, Body, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from msal import ConfidentialClientApplication, SerializableTokenCache
 from dotenv import load_dotenv
 
 from catalog.core import load_settings
 from catalog.admin_registry import list_admin_login_users, verify_admin_password
+from catalog.admin_access import require_admin_host
 from catalog.representative_registry import (
     list_representative_login_users,
+    representative_login_storage_is_configured,
     reset_representative_password_with_code,
     verify_representative_password,
 )
@@ -148,7 +150,7 @@ def _clear_auth_failures(key: str) -> None:
 
 def _admin_login_capabilities() -> dict[str, bool]:
     settings = load_settings()
-    admin_users = list_admin_login_users()
+    admin_users = _admin_password_users()
     return {
         "password_login_available": bool(admin_users),
         "password_login_requires_email": bool(admin_users and any(user["email"] != "admin" for user in admin_users)),
@@ -158,7 +160,26 @@ def _admin_login_capabilities() -> dict[str, bool]:
 
 
 def is_admin_login_configured() -> bool:
-    return bool(list_admin_login_users() or AUTH_CONFIGURED)
+    return bool(_admin_password_users() or AUTH_CONFIGURED)
+
+
+def _admin_password_users() -> list[dict[str, object]]:
+    users_by_email: dict[str, dict[str, object]] = {}
+    representative_users = list_representative_login_users()
+    managed_representative_emails = {
+        str(user["email"]).strip().lower()
+        for user in representative_users
+        if user.get("managed")
+    }
+    for user in representative_users:
+        if not user.get("is_admin"):
+            continue
+        users_by_email[user["email"]] = {**user, "admin_source": "representative_registry"}
+    for user in list_admin_login_users():
+        if user["email"] in managed_representative_emails:
+            continue
+        users_by_email.setdefault(user["email"], {**user, "admin_source": "admin_registry"})
+    return list(users_by_email.values())
 
 
 def _request_session(request: Request) -> dict:
@@ -216,12 +237,18 @@ def _parse_representative_users() -> list[dict[str, str]]:
 
 
 def is_representative_login_configured() -> bool:
-    return len(_parse_representative_users()) > 0
+    # A exigencia explicita de login deve proteger o catalogo mesmo quando o
+    # cadastro de representantes estiver em um armazenamento externo ainda
+    # indisponivel durante o cold start do deploy. Sem essa verificacao, um
+    # deploy sem o arquivo local de usuarios acabava ficando aberto.
+    settings = load_settings()
+    return settings.representative_login_required or representative_login_storage_is_configured()
 
 
 def _representative_login_capabilities() -> dict[str, bool]:
+    login_available = representative_login_storage_is_configured()
     return {
-        "login_available": is_representative_login_configured(),
+        "login_available": login_available,
         "protection_enabled": is_representative_login_configured(),
     }
 
@@ -232,7 +259,11 @@ def _representative_jwt_secret() -> str:
 
 
 def _representative_jwt_expires_seconds() -> int:
-    minutes = max(int(load_settings().representative_jwt_expires_minutes), 1)
+    configured_idle_minutes = os.getenv("CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES", "").strip()
+    minutes = max(
+        int(configured_idle_minutes or load_settings().representative_jwt_expires_minutes),
+        1,
+    )
     return minutes * 60
 
 
@@ -423,7 +454,7 @@ def get_access_token(scopes: List[str] = SCOPES) -> str:
 auth_router = APIRouter()
 
 
-@auth_router.get("/auth/session")
+@auth_router.get("/auth/session", dependencies=[Depends(require_admin_host)])
 def auth_session_status(request: Request):
     capabilities = _admin_login_capabilities()
     payload = _get_admin_session_payload(request)
@@ -513,9 +544,9 @@ def representative_logout(request: Request):
     return response
 
 
-@auth_router.post("/auth/admin/login")
+@auth_router.post("/auth/admin/login", dependencies=[Depends(require_admin_host)])
 def admin_password_login(request: Request, payload: dict = Body(...)):
-    admin_users = list_admin_login_users()
+    admin_users = _admin_password_users()
     if not admin_users:
         raise HTTPException(status_code=503, detail="Admin password login not configured")
 
@@ -537,14 +568,14 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
 
     if not selected_user or not verify_admin_password(selected_user, provided_password):
         _record_auth_failure(rate_limit_key)
-        raise HTTPException(status_code=403, detail="Invalid admin credentials")
+        raise HTTPException(status_code=403, detail="Credenciais administrativas inválidas.")
     _clear_auth_failures(rate_limit_key)
 
     _mark_admin_session(request, provider="password", email=selected_user["email"])
     return auth_session_status(request)
 
 
-@auth_router.post("/auth/logout")
+@auth_router.post("/auth/logout", dependencies=[Depends(require_admin_host)])
 def logout(request: Request):
     _clear_admin_session(request)
     response = JSONResponse({"success": True, "authenticated": False})
@@ -559,7 +590,7 @@ def logout(request: Request):
     return response
 
 
-@auth_router.get("/auth/login")
+@auth_router.get("/auth/login", dependencies=[Depends(require_admin_host)])
 def login(request: Request, next: str | None = None):
     try:
         app = _build_msal_app()
@@ -584,7 +615,7 @@ def login(request: Request, next: str | None = None):
     return response
 
 
-@auth_router.get("/auth/callback")
+@auth_router.get("/auth/callback", dependencies=[Depends(require_admin_host)])
 def callback(request: Request, code: str = None, state: str = None, error: str = None):
     if error:
         raise HTTPException(status_code=400, detail=error)

@@ -1,11 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Catalogo serverless stack with S3 frontend, API Gateway, Lambda, Cognito and DynamoDB.
+Description: Catalogo serverless stack with CloudFront, private S3 buckets, API Gateway and Lambda.
 
 Parameters:
   StageName:
     Type: String
     Default: prod
+    AllowedPattern: "^[a-zA-Z0-9_-]+$"
   FrontendBucketName:
     Type: String
     Default: ""
@@ -17,12 +18,29 @@ Parameters:
     Default: "produtos/"
   CorsAllowOrigins:
     Type: String
-    Default: "http://localhost:5173"
+    Default: "https://catalog.invalid"
+    Description: Optional comma-separated external origins. CloudFront uses same-origin requests and does not require CORS.
   CatalogSessionSecret:
     Type: String
     NoEcho: true
     MinLength: 32
     Description: Secret with at least 32 characters used to sign admin sessions and representative JWTs.
+  AdminLoginEmail:
+    Type: String
+    Default: ""
+  AdminLoginPassword:
+    Type: String
+    NoEcho: true
+    Default: ""
+  RepresentativeUsersJson:
+    Type: String
+    NoEcho: true
+    Default: ""
+  RepresentativeJwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Independent secret used to sign representative JWTs.
   GoogleDriveFolderId:
     Type: String
     Default: ""
@@ -45,33 +63,30 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
+        CATALOG_SKIP_DOTENV: "true"
         CATALOG_ENABLE_API_DOCS: "false"
+        CATALOG_ALLOW_OPEN_ADMIN: "false"
         CATALOG_CORS_ALLOW_ORIGINS: !Ref CorsAllowOrigins
         CATALOG_CORS_ALLOW_CREDENTIALS: "true"
         CATALOG_SESSION_SECRET: !Ref CatalogSessionSecret
+        CATALOG_REPRESENTATIVE_JWT_SECRET: !Ref RepresentativeJwtSecret
         CATALOG_SESSION_COOKIE_SECURE: "true"
+        CATALOG_ADMIN_LOGIN_EMAIL: !Ref AdminLoginEmail
+        CATALOG_ADMIN_LOGIN_PASSWORD: !Ref AdminLoginPassword
+        CATALOG_REPRESENTATIVE_USERS_JSON: !Ref RepresentativeUsersJson
         CATALOG_GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
         CATALOG_GOOGLE_DRIVE_API_KEY: !Ref GoogleDriveApiKey
         CATALOG_GOOGLE_DRIVE_RECURSIVE: "true"
         CATALOG_GOOGLE_DRIVE_MAX_DEPTH: "4"
         CATALOG_S3_MEDIA_BUCKET: !Ref MediaBucket
         CATALOG_S3_MEDIA_PREFIX: !Ref MediaPrefix
-        CATALOG_S3_MEDIA_PRESIGNED_URLS: "false"
-        CATALOG_DATA_TABLE_NAME: !Ref CatalogDataTable
+        CATALOG_S3_MEDIA_PRESIGNED_URLS: "true"
 
 Resources:
   CatalogHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref StageName
-      CorsConfiguration:
-        AllowCredentials: true
-        AllowHeaders:
-          - "*"
-        AllowMethods:
-          - "*"
-        AllowOrigins:
-          - !Ref CorsAllowOrigins
 
   CatalogApiFunction:
     Type: AWS::Serverless::Function
@@ -80,8 +95,6 @@ Resources:
       Handler: catalog.lambda_handler.handler
       Policies:
         - AWSLambdaBasicExecutionRole
-        - DynamoDBCrudPolicy:
-            TableName: !Ref CatalogDataTable
         - S3ReadPolicy:
             BucketName: !Ref MediaBucket
       Events:
@@ -98,87 +111,201 @@ Resources:
             Path: /{proxy+}
             Method: ANY
 
-  CatalogDataTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: pk
-          AttributeType: S
-        - AttributeName: sk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: pk
-          KeyType: HASH
-        - AttributeName: sk
-          KeyType: RANGE
-      SSESpecification:
-        SSEEnabled: true
-
-  CatalogUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: !Sub "${AWS::StackName}-users"
-      UsernameAttributes:
-        - email
-      AutoVerifiedAttributes:
-        - email
-
-  CatalogUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub "${AWS::StackName}-web"
-      UserPoolId: !Ref CatalogUserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-
   MediaBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !If [HasMediaBucketName, !Ref MediaBucketName, !Ref AWS::NoValue]
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders:
-              - "*"
-            AllowedMethods:
-              - GET
-              - HEAD
-            AllowedOrigins:
-              - "*"
-            MaxAge: 3000
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-
-  MediaBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref MediaBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: PublicReadCatalogImages
-            Effect: Allow
-            Principal: "*"
-            Action: s3:GetObject
-            Resource: !Sub "${MediaBucket.Arn}/*"
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   FrontendBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !If [HasFrontendBucketName, !Ref FrontendBucketName, !Ref AWS::NoValue]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Description: !Sub "Private frontend access for ${AWS::StackName}"
+        Name: !Sub "${AWS::StackName}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  StaticCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${AWS::StackName}-static-cache"
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  ApiCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${AWS::StackName}-api-no-cache"
+        DefaultTTL: 0
+        MaxTTL: 0
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  ApiOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "${AWS::StackName}-api-origin"
+        CookiesConfig:
+          CookieBehavior: all
+        HeadersConfig:
+          HeaderBehavior: allExcept
+          Headers:
+            - Host
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-spa-rewrite"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Rewrite extensionless frontend routes to index.html
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri.endsWith("/") || !uri.split("/").pop().includes(".")) {
+            request.uri = "/index.html";
+          }
+          return request;
+        }
+
+  CatalogDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "Catalogo ${StageName}"
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Origins:
+          - Id: FrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: ApiOrigin
+            DomainName: !Sub "${CatalogHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+            OriginPath: !Sub "/${StageName}"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref StaticCachePolicy
+          Compress: true
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: "catalog/*"
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: !Ref ApiCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+            Compress: true
+          - PathPattern: "auth/*"
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: !Ref ApiCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+            Compress: true
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -187,34 +314,32 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: PublicReadFrontend
+          - Sid: AllowCloudFrontRead
             Effect: Allow
-            Principal: "*"
+            Principal:
+              Service: cloudfront.amazonaws.com
             Action: s3:GetObject
             Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CatalogDistribution}"
 
 Outputs:
   ApiUrl:
-    Description: API Gateway URL
-    Value: !Sub "https://${CatalogHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
-  FrontendBucket:
-    Description: S3 bucket for frontend build files
+    Description: Direct API Gateway URL for diagnostics
+    Value: !Sub "https://${CatalogHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${StageName}"
+  ApplicationUrl:
+    Description: Public HTTPS URL for the catalog
+    Value: !Sub "https://${CatalogDistribution.DomainName}"
+  CloudFrontDistributionId:
+    Description: Distribution ID used for cache invalidation
+    Value: !Ref CatalogDistribution
+  FrontendBucketName:
+    Description: Private S3 bucket for frontend build files
     Value: !Ref FrontendBucket
-  FrontendWebsiteUrl:
-    Description: S3 static website endpoint
-    Value: !GetAtt FrontendBucket.WebsiteURL
   MediaBucketName:
-    Description: S3 bucket for product images
+    Description: Private S3 bucket for product images
     Value: !Ref MediaBucket
   MediaPrefix:
     Description: Prefix used by the API to list product images
     Value: !Ref MediaPrefix
-  CognitoUserPoolId:
-    Description: Cognito user pool ID reserved for the next auth migration step
-    Value: !Ref CatalogUserPool
-  CognitoUserPoolClientId:
-    Description: Cognito web client ID
-    Value: !Ref CatalogUserPoolClient
-  DynamoDBTableName:
-    Description: DynamoDB table reserved for catalog data migration
-    Value: !Ref CatalogDataTable

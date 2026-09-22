@@ -1,0 +1,48 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "fluid": true,
+  "regions": ["gru1"],
+  "installCommand": "npm --prefix frontend ci",
+  "buildCommand": "npm --prefix frontend run build",
+  "outputDirectory": "frontend/dist",
+  "env": {
+    "CATALOG_SKIP_DOTENV": "true",
+    "CATALOG_ENABLE_API_DOCS": "false",
+    "CATALOG_ALLOW_OPEN_ADMIN": "false",
+    "CATALOG_REQUIRE_REPRESENTATIVE_LOGIN": "true",
+    "CATALOG_SESSION_COOKIE_SECURE": "true",
+    "CATALOG_SESSION_MAX_AGE_SECONDS": "300",
+    "CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES": "5",
+    "CATALOG_MEDIA_BLOB_ENABLED": "false"
+  },
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "{catalog/json/**,reports/erp_products.json,reports/media_manifest.json,reports/catalog_runtime.json}",
+      "excludeFiles": "{.aws-sam/**,.github/**,docs/**,frontend/**,logs/**,tests/**,__pycache__/**,**/*.pyc}",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/catalog",
+      "destination": "/api/index.py?__catalog_path=/catalog"
+    },
+    {
+      "source": "/catalog/:path*",
+      "destination": "/api/index.py?__catalog_path=/catalog/:path*"
+    },
+    {
+      "source": "/auth",
+      "destination": "/api/index.py?__catalog_path=/auth"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "/api/index.py?__catalog_path=/auth/:path*"
+    },
+    {
+      "source": "/((?!api(?:/|$)).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

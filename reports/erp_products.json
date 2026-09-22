@@ -1,6 +1,6 @@
 {
   "imported_at": "2026-07-07T12:39:37.020417+00:00",
-  "updated_at": "2026-07-07T12:39:37.027370+00:00",
+  "updated_at": "2026-07-20T18:38:46.491105+00:00",
   "products": [
     {
       "Codigo": "5989",
@@ -15,7 +15,6 @@
       "CODPROD": "5989",
       "INFORMACOESTECNICAS": "CÓDIGO: 5989\\REFERÊNCIA: 5989\\DIMENSÕES:Ø130x350mm\\POTÊNCIA: 5W\\TENSÃO: DC5V\\FLUXO LUMINOSO: 350LM\\TEMP. DE COR(K): 2700K\\IRC:?80\\INTERRUPTOR: SENSIVEL AO TOQUE\\BATERIA: 2000mAh\\MATERIAL: MADEIRA E PE\\GARANTIA: 1 ANO",
       "CODMARCA": "1",
-      "DESCRICAO": "ABAJUR TOUCH  RECARREGAVEL ATS-001 ",
       "CODAUXILIAR": "7896688231828",
       "NBM": "94052100",
       "PERCIPIVENDA": "9.75"
@@ -38823,7 +38822,7 @@
   ],
   "catalog_meta": {
     "imported_at": "2026-07-07T12:39:37.020417+00:00",
-    "updated_at": "2026-07-07T12:39:37.027370+00:00",
+    "updated_at": "2026-07-20T18:38:46.491105+00:00",
     "source_path": "D:\\catalogo\\reports\\erp_inbox\\pcprodut_20260707_093815_20260707_123834.json",
     "source_name": "pcprodut_20260707_093815_20260707_123834.json",
     "source_updated_at": "2026-07-07T12:38:34.639394+00:00",

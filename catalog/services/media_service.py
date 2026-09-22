@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_product_photos_payload(code: str | None = None, share_url: str | None = None) -> Dict:
-    from .. import google_drive, onedrive, s3_media
+    from .. import cdn_media, google_drive, onedrive, s3_media, vercel_blob_media
 
     if code:
         try:
@@ -18,6 +18,8 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
                 return local_photos
             if (
                 onedrive.resolve_local_products_root()
+                and not cdn_media.is_configured()
+                and not vercel_blob_media.is_configured()
                 and not s3_media.is_configured()
                 and not google_drive.is_configured()
             ):
@@ -28,6 +30,23 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
                 local_exc,
                 exc_info=True,
             )
+
+        if cdn_media.is_configured():
+            cdn_photos = cdn_media.categorize_photos_for_code(code)
+            if any(cdn_photos.values()):
+                return cdn_photos
+
+        if vercel_blob_media.is_configured():
+            try:
+                blob_photos = vercel_blob_media.categorize_photos_for_code(code)
+                if any(blob_photos.values()):
+                    return blob_photos
+            except Exception as blob_exc:
+                logger.warning(
+                    "Vercel Blob photo lookup failed, trying next fallback: %s",
+                    blob_exc,
+                    exc_info=True,
+                )
 
         if s3_media.is_configured():
             try:
@@ -72,12 +91,14 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
 
 
 def get_product_images_payload(code: str, share_url: str | None = None) -> Dict:
-    from .. import google_drive, onedrive, s3_media
+    from .. import cdn_media, google_drive, onedrive, s3_media, vercel_blob_media
 
     try:
         local_images = onedrive.find_local_images_for_code(code)
         if local_images or (
             onedrive.resolve_local_products_root()
+            and not cdn_media.is_configured()
+            and not vercel_blob_media.is_configured()
             and not s3_media.is_configured()
             and not google_drive.is_configured()
         ):
@@ -88,6 +109,23 @@ def get_product_images_payload(code: str, share_url: str | None = None) -> Dict:
             local_exc,
             exc_info=True,
         )
+
+    if cdn_media.is_configured():
+        cdn_images = cdn_media.find_images_for_code(code)
+        if cdn_images:
+            return {"codigo": code, "imagens": cdn_images}
+
+    if vercel_blob_media.is_configured():
+        try:
+            blob_images = vercel_blob_media.find_images_for_code(code)
+            if blob_images:
+                return {"codigo": code, "imagens": blob_images}
+        except Exception as blob_exc:
+            logger.warning(
+                "Vercel Blob image lookup failed, trying next fallback: %s",
+                blob_exc,
+                exc_info=True,
+            )
 
     if s3_media.is_configured():
         try:
@@ -128,6 +166,16 @@ def get_google_drive_photos_payload(code: str) -> Dict:
     if not google_drive.is_configured():
         raise ValueError("missing CATALOG_GOOGLE_DRIVE_FOLDER_ID or CATALOG_GOOGLE_DRIVE_API_KEY configuration")
     return google_drive.categorize_photos_for_code(code)
+
+
+def get_google_drive_photos_batch_payload(codes: list[str]) -> Dict[str, Dict[str, str | None]]:
+    from .. import google_drive
+
+    if not codes:
+        return {}
+    if not google_drive.is_configured():
+        raise ValueError("missing CATALOG_GOOGLE_DRIVE_FOLDER_ID or CATALOG_GOOGLE_DRIVE_API_KEY configuration")
+    return google_drive.categorize_photos_for_codes(codes)
 
 
 def get_google_drive_images_payload(code: str) -> Dict:

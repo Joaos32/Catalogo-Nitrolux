@@ -18,7 +18,6 @@ import unicodedata
 from urllib.parse import parse_qs, unquote, urlparse
 from zipfile import ZIP_DEFLATED, ZipFile
 
-import pandas as pd
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 
@@ -49,7 +48,10 @@ PHOTO_FIELDS: tuple[tuple[str, str], ...] = (
 )
 PAGE_SIZE = (1240, 1754)
 PAGE_MARGIN = 80
+TECHNICAL_SHEET_SCALE = 2
+TECHNICAL_SHEET_DPI = 300
 BASE_DIR = Path(__file__).resolve().parents[1]
+BUNDLED_FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSans-Variable.ttf"
 BRAND_BANNER_CANDIDATES = (
     BASE_DIR / "frontend" / "legacy" / "assets" / "azul-nitro.jpg",
     BASE_DIR / "Azul nitro.jpg",
@@ -108,7 +110,12 @@ def _slugify(value: str, fallback: str = "catalogo") -> str:
 
 
 def _load_products() -> List[Dict[str, Any]]:
-    return onedrive.list_local_products()
+    # Use the same media enrichment pipeline as the catalog API. In serverless
+    # deployments the ERP data has empty photo fields and the public CDN URLs
+    # are supplied by this service from the bundled media manifest.
+    from .services.catalog_service import list_catalog_products
+
+    return list_catalog_products()
 
 
 def _max_remote_image_bytes() -> int:
@@ -283,8 +290,14 @@ def _tabular_rows(products: Sequence[Dict[str, Any]]) -> tuple[List[str], List[D
 
 def _build_csv_bytes(products: Sequence[Dict[str, Any]]) -> bytes:
     columns, rows = _tabular_rows(products)
-    buffer = StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
+    buffer = StringIO(newline="")
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=columns,
+        extrasaction="ignore",
+        delimiter=";",
+        lineterminator="\r\n",
+    )
     writer.writeheader()
     writer.writerows(rows)
     return buffer.getvalue().encode("utf-8-sig")
@@ -310,23 +323,37 @@ def _build_json_bytes(
 
 
 def _build_xlsx_bytes(products: Sequence[Dict[str, Any]]) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+
     columns, rows = _tabular_rows(products)
-    dataframe = pd.DataFrame(rows, columns=columns)
     output = BytesIO()
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        dataframe.to_excel(writer, sheet_name="Produtos", index=False)
-        worksheet = writer.sheets["Produtos"]
-        worksheet.freeze_panes = "A2"
-        for index, column in enumerate(dataframe.columns, start=1):
-            values = [column, *dataframe[column].astype(str).tolist()]
-            width = min(max((len(value) for value in values), default=10) + 2, 60)
-            worksheet.column_dimensions[worksheet.cell(row=1, column=index).column_letter].width = width
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Produtos"
+    worksheet.freeze_panes = "A2"
+    worksheet.append(columns)
+    for row in rows:
+        worksheet.append([row.get(column, "") for column in columns])
+    for index, column in enumerate(columns, start=1):
+        values = [column, *(row.get(column, "") for row in rows)]
+        width = min(max((len(str(value)) for value in values), default=10) + 2, 60)
+        worksheet.column_dimensions[get_column_letter(index)].width = width
+    workbook.save(output)
 
     return output.getvalue()
 
 
 def _load_font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    if BUNDLED_FONT_PATH.is_file():
+        try:
+            bundled_font = ImageFont.truetype(str(BUNDLED_FONT_PATH), size=size)
+            bundled_font.set_variation_by_name("Bold" if bold else "Regular")
+            return bundled_font
+        except (OSError, ValueError):
+            pass
+
     font_names = [
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
         "Arial Bold.ttf" if bold else "Arial.ttf",
@@ -438,6 +465,33 @@ def _paste_fitted_image(
     page.paste(canvas, (left, top))
 
 
+def _high_resolution_technical_page(
+    page: Image.Image,
+    *,
+    product_image: Image.Image | None = None,
+    ambient_image: Image.Image | None = None,
+    measures_image: Image.Image | None = None,
+) -> Image.Image:
+    """Upscale the layout and reinsert source photos at native quality."""
+
+    scale = TECHNICAL_SHEET_SCALE
+    high_resolution = page.resize(
+        (PAGE_SIZE[0] * scale, PAGE_SIZE[1] * scale),
+        Image.Resampling.LANCZOS,
+    )
+
+    def scaled(box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        return tuple(value * scale for value in box)  # type: ignore[return-value]
+
+    if product_image is not None:
+        _paste_fitted_image(high_resolution, product_image, scaled((104, 228, 568, 724)), background="#ffffff")
+    if ambient_image is not None:
+        _paste_fitted_image(high_resolution, ambient_image, scaled((810, 1098, 1136, 1286)), background="#ffffff")
+    if measures_image is not None:
+        _paste_fitted_image(high_resolution, measures_image, scaled((810, 1344, 1136, 1532)), background="#ffffff")
+    return high_resolution
+
+
 def _paste_cover_image(
     page: Image.Image,
     image: Image.Image,
@@ -500,6 +554,21 @@ def _parse_specs_pairs(specs: str) -> List[tuple[str, str]]:
 
 def _normalize_lookup_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _normalize_text(value))
+
+
+def _canonical_spec_key(value: str) -> str:
+    key = _normalize_lookup_key(value)
+    aliases = {
+        "potenciaw": "potencia",
+        "tensaov": "tensao",
+        "voltagemv": "tensao",
+        "tempcork": "temperaturadecor",
+        "tempcor": "temperaturadecor",
+        "cct": "temperaturadecor",
+        "dimensao": "medidas",
+        "dimensoes": "medidas",
+    }
+    return aliases.get(key, key)
 
 
 def _spec_lookup(product: Dict[str, Any], specs: str) -> Dict[str, str]:
@@ -836,9 +905,9 @@ def _build_product_pdf_pages(product: Dict[str, Any]) -> List[Image.Image]:
             break
 
     enriched_rows = list(technical_rows)
-    seen_rows = {_normalize_lookup_key(label) for label, _ in enriched_rows}
+    seen_rows = {_canonical_spec_key(label) for label, _ in enriched_rows}
     for label, value in _parse_specs_pairs(specs):
-        normalized_label = _normalize_lookup_key(label)
+        normalized_label = _canonical_spec_key(label)
         if normalized_label in {"codigo", "cod"} or normalized_label in seen_rows:
             continue
         enriched_rows.append((label, value))
@@ -850,7 +919,7 @@ def _build_product_pdf_pages(product: Dict[str, Any]) -> List[Image.Image]:
         ("Categoria", "Categoria"),
     ):
         value = _stringify(product.get(key))
-        normalized_label = _normalize_lookup_key(label)
+        normalized_label = _canonical_spec_key(label)
         if value and normalized_label not in seen_rows:
             enriched_rows.append((label, value))
             seen_rows.add(normalized_label)
@@ -956,7 +1025,14 @@ def _build_product_pdf_pages(product: Dict[str, Any]) -> List[Image.Image]:
     disclaimer = "Dados sujeitos à conferência conforme cadastro e lote do produto."
     disclaimer_width, _ = _measure_text(draw, disclaimer, footer_font)
     draw.text((PAGE_SIZE[0] - 72 - disclaimer_width, 1692), disclaimer, fill="#cbd5e1", font=footer_font)
-    pages.append(page)
+    pages.append(
+        _high_resolution_technical_page(
+            page,
+            product_image=product_image,
+            ambient_image=ambient_image,
+            measures_image=measures_image,
+        )
+    )
 
     remaining_attributes = [
         (label, value)
@@ -980,7 +1056,7 @@ def _build_product_pdf_pages(product: Dict[str, Any]) -> List[Image.Image]:
             title="ATRIBUTOS ADICIONAIS",
         )
         extra_draw.text((60, 1688), footer_text, fill="#6d82a6", font=footer_font)
-        pages.append(extra_page)
+        pages.append(_high_resolution_technical_page(extra_page))
         remaining_attributes = remaining_attributes[consumed:]
 
     return pages
@@ -1060,7 +1136,16 @@ def _build_pdf_bytes(
     )
     output = BytesIO()
     first_page, *other_pages = pages
-    first_page.save(output, format="PDF", save_all=True, append_images=other_pages)
+    is_technical_sheet = len(products) == 1
+    first_page.save(
+        output,
+        format="PDF",
+        save_all=True,
+        append_images=other_pages,
+        resolution=TECHNICAL_SHEET_DPI if is_technical_sheet else 150,
+        quality=95,
+        subsampling=0,
+    )
     return output.getvalue()
 
 
@@ -1082,8 +1167,14 @@ def _build_photo_manifest_rows(products: Sequence[Dict[str, Any]]) -> List[Dict[
 
 
 def _csv_from_rows(rows: Sequence[Dict[str, str]], columns: Sequence[str]) -> bytes:
-    buffer = StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=list(columns), extrasaction="ignore")
+    buffer = StringIO(newline="")
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=list(columns),
+        extrasaction="ignore",
+        delimiter=";",
+        lineterminator="\r\n",
+    )
     writer.writeheader()
     writer.writerows(rows)
     return buffer.getvalue().encode("utf-8-sig")
@@ -1181,7 +1272,7 @@ def build_catalog_export(
         raise ValueError("technical sheet export requires a product code")
 
     if normalized_format == "ficha" and code:
-        base_name = f"ficha-tecnica-{_slugify(code, fallback='produto')}"
+        base_name = f"ficha-tecnica-{_slugify(code, fallback='produto')}-alta-resolucao-v2"
     elif code:
         base_name = f"produto-{_slugify(code, fallback='item')}"
     elif brand:
@@ -1202,5 +1293,6 @@ def build_catalog_export(
     else:
         payload = _build_zip_bytes(products, query=query, category=category, code=code, base_name=base_name)
 
-    media_type, filename = _response_metadata(normalized_format, base_name=base_name)
+    response_base_name = f"{base_name}-organizado" if normalized_format == "csv" else base_name
+    media_type, filename = _response_metadata(normalized_format, base_name=response_base_name)
     return payload, media_type, filename

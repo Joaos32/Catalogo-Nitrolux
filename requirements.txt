@@ -1,7 +1,5 @@
 # backend framework
 fastapi
-uvicorn[standard]
-httpx
 mangum
 itsdangerous
 
@@ -12,17 +10,14 @@ python-dotenv
 requests
 beautifulsoup4
 boto3
+vercel>=0.5.0
 
 # Microsoft Graph auth
 msal
 
 # data handling
-pandas
 openpyxl
 Pillow
 psycopg[binary]
-
-# testing
-pytest
 
 # add any additional libraries for OneDrive and spreadsheet access

@@ -20,6 +20,8 @@ def test_load_settings_exposes_optional_security_flags(monkeypatch):
     monkeypatch.setenv("CATALOG_ENABLE_API_DOCS", "false")
     monkeypatch.setenv("CATALOG_ERP_ADMIN_TOKEN", "super-secret-token")
     monkeypatch.setenv("CATALOG_ALLOW_OPEN_ADMIN", "true")
+    monkeypatch.setenv("CATALOG_ADMIN_HOSTS", "painel.example.com,painel-hml.example.com")
+    monkeypatch.setenv("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN", "true")
     monkeypatch.setenv("CATALOG_ADMIN_LOGIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("CATALOG_ADMIN_LOGIN_PASSWORD", "very-secret-password")
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", "rep@example.com")
@@ -34,6 +36,8 @@ def test_load_settings_exposes_optional_security_flags(monkeypatch):
     assert settings.api_docs_enabled is False
     assert settings.erp_admin_token == "super-secret-token"
     assert settings.allow_open_admin is True
+    assert settings.admin_hosts == ["painel.example.com", "painel-hml.example.com"]
+    assert settings.representative_login_required is True
     assert settings.admin_login_email == "admin@example.com"
     assert settings.admin_login_password == "very-secret-password"
     assert settings.representative_login_email == "rep@example.com"
@@ -50,6 +54,10 @@ def test_security_headers_are_present():
 
     for header, value in SECURITY_HEADERS.items():
         assert response.headers.get(header.lower()) == value
+
+    permissions_policy = response.headers["permissions-policy"]
+    assert "camera=(self)" in permissions_policy
+    assert "microphone=()" in permissions_policy
 
 
 def test_hsts_header_is_added_on_https():
@@ -91,6 +99,30 @@ def test_erp_routes_require_admin_token_when_configured(monkeypatch):
     )
     assert valid.status_code == 200
     assert "products_loaded" in valid.json()
+
+
+def test_admin_routes_are_hidden_outside_configured_admin_host(monkeypatch):
+    monkeypatch.setenv("CATALOG_ADMIN_HOSTS", "painel.example.com")
+    monkeypatch.setenv("CATALOG_ADMIN_LOGIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("CATALOG_ADMIN_LOGIN_PASSWORD", "super-secret-token")
+
+    public_client = TestClient(create_app(), base_url="https://catalogo.example.com")
+    assert public_client.get("/auth/session").status_code == 404
+    assert public_client.get("/catalog/erp/status").status_code == 404
+
+    admin_client = TestClient(create_app(), base_url="https://painel.example.com")
+    assert admin_client.get("/auth/session").status_code == 200
+    assert admin_client.get("/catalog/erp/status").status_code == 401
+
+
+def test_catalog_requires_jwt_when_representative_users_exist(monkeypatch):
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_USERS_JSON", '[{"email":"rep@example.com","password":"secret"}]')
+
+    client = TestClient(create_app())
+    response = client.get("/catalog/local/produtos")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Representative login required"}
 
 
 def test_erp_routes_fail_closed_without_admin_configuration(monkeypatch):
@@ -194,12 +226,43 @@ def test_representative_session_endpoint_reports_open_access_by_default(monkeypa
     }
 
 
+def test_representative_login_requirement_fails_closed_without_user_storage(monkeypatch):
+    monkeypatch.setenv("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN", "true")
+
+    client = TestClient(create_app())
+
+    blocked = client.get("/catalog/local/produtos")
+    assert blocked.status_code == 401
+    assert blocked.json() == {"detail": "Representative login required"}
+
+    status = client.get("/auth/representative/session")
+    assert status.status_code == 200
+    assert status.json()["login_available"] is False
+    assert status.json()["protection_enabled"] is True
+
+
+def test_representative_configuration_check_does_not_read_remote_registry(monkeypatch):
+    from catalog import auth, representative_registry
+
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_BUCKET", "registry-bucket")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_ACCESS_KEY_ID", "limited-key")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_SECRET_ACCESS_KEY", "limited-secret")
+    monkeypatch.setattr(
+        representative_registry,
+        "_load_s3_payload",
+        lambda: (_ for _ in ()).throw(AssertionError("remote registry must not be read")),
+    )
+
+    assert auth.is_representative_login_configured() is True
+
+
 def test_catalog_routes_require_representative_jwt_when_configured(monkeypatch):
     monkeypatch.setenv(
         "CATALOG_REPRESENTATIVE_USERS_JSON",
         '[{"email":"rep@example.com","password":"rep-secret","name":"Representante Recife"}]',
     )
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_JWT_SECRET", "catalog-rep-jwt-secret")
+    monkeypatch.setenv("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN", "true")
 
     client = TestClient(create_app())
 
@@ -258,6 +321,45 @@ def test_catalog_routes_require_representative_jwt_when_configured(monkeypatch):
     assert blocked_again.status_code == 401
 
 
+def test_representative_idle_session_is_refreshed_only_while_active(monkeypatch):
+    clock = [1_800_000_000]
+    monkeypatch.setenv(
+        "CATALOG_REPRESENTATIVE_USERS_JSON",
+        '[{"email":"rep@example.com","password":"rep-secret","name":"Representante"}]',
+    )
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_JWT_SECRET", "idle-jwt-secret")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES", "30")
+    monkeypatch.setattr(auth_module.time, "time", lambda: clock[0])
+
+    client = TestClient(create_app())
+    login = client.post(
+        "/auth/representative/login",
+        json={"email": "rep@example.com", "password": "rep-secret"},
+    )
+    assert login.status_code == 200
+    first_token = client.cookies.get(auth_module.REPRESENTATIVE_COOKIE_NAME)
+    first_claims = auth_module._decode_representative_token(first_token)
+
+    clock[0] += 5 * 60
+    early_session = client.get("/auth/representative/session")
+    assert early_session.status_code == 200
+    assert client.cookies.get(auth_module.REPRESENTATIVE_COOKIE_NAME) == first_token
+    assert not early_session.headers.get("set-cookie")
+
+    clock[0] += 11 * 60
+    active_session = client.get("/auth/representative/session")
+    assert active_session.status_code == 200
+    refreshed_token = client.cookies.get(auth_module.REPRESENTATIVE_COOKIE_NAME)
+    refreshed_claims = auth_module._decode_representative_token(refreshed_token)
+
+    assert refreshed_claims["exp"] - first_claims["exp"] == 16 * 60
+    assert active_session.headers.get("set-cookie")
+
+    logout = client.post("/auth/logout")
+    assert logout.status_code == 200
+    assert client.cookies.get(auth_module.REPRESENTATIVE_COOKIE_NAME) is None
+
+
 def test_representative_login_rate_limits_repeated_failures(monkeypatch):
     monkeypatch.setenv(
         "CATALOG_REPRESENTATIVE_USERS_JSON",
@@ -293,6 +395,7 @@ def test_admin_login_clears_rate_limit_after_success(monkeypatch):
             json={"email": "admin@example.com", "password": "wrong-secret"},
         )
         assert response.status_code == 403
+        assert response.json() == {"detail": "Credenciais administrativas inválidas."}
 
     success = client.post(
         "/auth/admin/login",
@@ -351,10 +454,56 @@ def test_representative_login_accepts_managed_user_created_by_admin(monkeypatch,
     assert allowed.status_code == 200
 
 
-def test_representative_can_reset_password_with_admin_code(monkeypatch, tmp_path):
-    managed_path = tmp_path / "representatives.json"
+def test_managed_user_role_controls_admin_login(monkeypatch, tmp_path):
+    managed_path = tmp_path / "representative-roles.json"
     monkeypatch.setenv("CATALOG_ADMIN_LOGIN_EMAIL", "")
     monkeypatch.setenv("CATALOG_ADMIN_LOGIN_PASSWORD", "")
+    monkeypatch.setenv("CATALOG_ERP_ADMIN_TOKEN", "")
+    monkeypatch.setenv("CATALOG_ALLOW_OPEN_ADMIN", "true")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", "")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_PASSWORD", "")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_USERS_JSON", "")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_USERS_FILE", str(managed_path))
+
+    client = TestClient(create_app())
+    representative = client.put(
+        "/catalog/representatives/user@example.com",
+        json={"email": "user@example.com", "name": "Usuario", "password": "user-secret", "is_admin": False},
+    )
+    assert representative.status_code == 200
+    assert representative.json()["user"]["role"] == "representative"
+
+    admin = client.put(
+        "/catalog/representatives/admin-managed@example.com",
+        json={
+            "email": "admin-managed@example.com",
+            "name": "Admin Managed",
+            "password": "admin-secret",
+            "is_admin": True,
+        },
+    )
+    assert admin.status_code == 200
+    assert admin.json()["user"]["is_admin"] is True
+    assert admin.json()["admin_users"] == 1
+
+    denied = client.post(
+        "/auth/admin/login",
+        json={"email": "user@example.com", "password": "user-secret"},
+    )
+    assert denied.status_code == 403
+
+    allowed = client.post(
+        "/auth/admin/login",
+        json={"email": "admin-managed@example.com", "password": "admin-secret"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["authenticated"] is True
+
+
+def test_representative_can_reset_password_with_admin_code(monkeypatch, tmp_path):
+    managed_path = tmp_path / "representatives.json"
+    monkeypatch.setenv("CATALOG_ADMIN_LOGIN_EMAIL", "env-rep@example.com")
+    monkeypatch.setenv("CATALOG_ADMIN_LOGIN_PASSWORD", "old-secret")
     monkeypatch.setenv("CATALOG_ERP_ADMIN_TOKEN", "")
     monkeypatch.setenv("CATALOG_ALLOW_OPEN_ADMIN", "true")
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", "env-rep@example.com")
@@ -366,11 +515,18 @@ def test_representative_can_reset_password_with_admin_code(monkeypatch, tmp_path
 
     client = TestClient(create_app())
 
+    admin_login = client.post(
+        "/auth/admin/login",
+        json={"email": "env-rep@example.com", "password": "old-secret"},
+    )
+    assert admin_login.status_code == 200
+
     reset = client.post("/catalog/representatives/env-rep@example.com/password-reset")
     assert reset.status_code == 200
     reset_payload = reset.json()
     assert reset_payload["reset_code"]
     assert reset_payload["user"]["email"] == "env-rep@example.com"
+    assert reset_payload["user"]["is_admin"] is True
     assert reset_payload["user"]["password_reset_pending"] is True
 
     invalid_code = client.post(
@@ -406,6 +562,20 @@ def test_representative_can_reset_password_with_admin_code(monkeypatch, tmp_path
     )
     assert new_login.status_code == 200
     assert new_login.json()["authenticated"] is True
+
+    old_admin_client = TestClient(create_app())
+    old_admin_login = old_admin_client.post(
+        "/auth/admin/login",
+        json={"email": "env-rep@example.com", "password": "old-secret"},
+    )
+    assert old_admin_login.status_code == 403
+
+    new_admin_client = TestClient(create_app())
+    new_admin_login = new_admin_client.post(
+        "/auth/admin/login",
+        json={"email": "env-rep@example.com", "password": "new-secret"},
+    )
+    assert new_admin_login.status_code == 200
 
 
 def test_auth_cache_file_can_be_overridden(monkeypatch):

@@ -69,8 +69,11 @@ class Settings:
     api_docs_enabled: bool
     cors_allow_origins: list[str]
     cors_allow_credentials: bool
+    integration_api_key: str | None
     erp_admin_token: str | None
     allow_open_admin: bool
+    admin_hosts: list[str]
+    representative_login_required: bool
     admin_login_email: str | None
     admin_login_password: str | None
     representative_login_email: str | None
@@ -103,9 +106,15 @@ def load_settings() -> Settings:
             os.getenv("CATALOG_CORS_ALLOW_CREDENTIALS"),
             default=True,
         ),
+        integration_api_key=_optional_env(os.getenv("CATALOG_INTEGRATION_API_KEY")),
         erp_admin_token=_optional_env(os.getenv("CATALOG_ERP_ADMIN_TOKEN")),
         allow_open_admin=_parse_bool_env(
             os.getenv("CATALOG_ALLOW_OPEN_ADMIN"),
+            default=False,
+        ),
+        admin_hosts=_parse_csv_env(os.getenv("CATALOG_ADMIN_HOSTS"), default=[]),
+        representative_login_required=_parse_bool_env(
+            os.getenv("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN"),
             default=False,
         ),
         admin_login_email=_optional_env(os.getenv("CATALOG_ADMIN_LOGIN_EMAIL")),

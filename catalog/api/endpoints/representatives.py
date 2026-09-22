@@ -45,6 +45,7 @@ async def save_representative(email: str, payload: dict = Body(...)):
             provided_email,
             str(payload.get("name") or "").strip(),
             str(payload.get("password") or "").strip(),
+            bool(payload.get("is_admin")) if "is_admin" in payload else None,
         )
         return {
             "created": created,

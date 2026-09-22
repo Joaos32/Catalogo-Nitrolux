@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -18,7 +19,9 @@ from catalog.core import configure_logging, load_settings
 logger = logging.getLogger(__name__)
 SECURITY_HEADERS = {
     "Content-Security-Policy": "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    # A visualizacao de produtos usa a camera, mas continua bloqueada para
+    # origens/frames de terceiros. Microfone e geolocalizacao nao sao usados.
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -82,6 +85,53 @@ def _configure_security_headers(app: FastAPI) -> None:
         return response
 
 
+def _configure_vercel_oidc(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def capture_vercel_oidc_token(request: Request, call_next):
+        from .vercel_oidc import reset_request_token, set_request_token
+
+        context_token = set_request_token(request.headers.get("x-vercel-oidc-token"))
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_token(context_token)
+
+
+def _configure_representative_idle_timeout(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def refresh_active_representative_session(request: Request, call_next):
+        from .auth import (
+            _build_representative_token,
+            _representative_jwt_expires_seconds,
+            _set_representative_cookie,
+            get_representative_claims,
+        )
+
+        claims = get_representative_claims(
+            request,
+            request.headers.get("authorization"),
+        )
+        response = await call_next(request)
+        logout_paths = {"/auth/logout", "/auth/representative/logout"}
+        expires_at = int(claims.get("exp") or 0) if claims else 0
+        refresh_threshold = max(_representative_jwt_expires_seconds() // 2, 60)
+        should_refresh = expires_at - int(time.time()) <= refresh_threshold
+        if (
+            claims
+            and should_refresh
+            and request.url.path not in logout_paths
+            and response.status_code < 400
+        ):
+            refreshed_token, _ = _build_representative_token(
+                {
+                    "email": str(claims.get("email") or claims.get("sub") or ""),
+                    "name": str(claims.get("name") or claims.get("email") or "Representante"),
+                }
+            )
+            _set_representative_cookie(response, request, refreshed_token)
+        return response
+
+
 def _register_disabled_docs_routes(app: FastAPI) -> None:
     @app.get("/docs")
     @app.get("/redoc")
@@ -132,6 +182,8 @@ def create_app() -> FastAPI:
         cookie_secure=settings.session_cookie_secure,
     )
     _configure_security_headers(app)
+    _configure_vercel_oidc(app)
+    _configure_representative_idle_timeout(app)
     if not settings.api_docs_enabled:
         _register_disabled_docs_routes(app)
     register_api_routes(app)
