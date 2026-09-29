@@ -389,6 +389,10 @@ export default function ErpAdminPage(): JSX.Element {
       setNotice({ tone: "warning", text: "Informe uma senha para concluir o cadastro do representante." });
       return;
     }
+    if (normalizedPassword && normalizedPassword.length < 10) {
+      setNotice({ tone: "warning", text: "A senha precisa ter pelo menos 10 caracteres." });
+      return;
+    }
 
     setIsSavingRepresentative(true);
     setNotice(null);

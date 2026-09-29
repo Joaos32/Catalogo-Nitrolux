@@ -93,7 +93,7 @@ def _object_url(bucket: str, key: str) -> str:
     )
 
 
-@cached
+@cached(stale_if_error=True)
 def list_s3_images(bucket: str | None = None, prefix: str | None = None) -> List[Dict]:
     media_bucket = bucket or _optional_env("CATALOG_S3_MEDIA_BUCKET")
     if not media_bucket:

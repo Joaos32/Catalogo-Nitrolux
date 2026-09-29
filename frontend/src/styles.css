@@ -2630,3 +2630,396 @@ body.body-theme-pienza::after {
     min-width: 0;
   }
 }
+
+.detail-meta {
+  min-width: 0;
+  gap: 16px;
+}
+.detail-product-heading {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.detail-eyebrow {
+  color: #37639f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.detail-meta h2 {
+  font-size: clamp(22px, 2.2vw, 29px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.detail-tags {
+  margin-top: 2px;
+  gap: 7px;
+}
+.detail-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 6px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.detail-tag-code {
+  background: #eef4ff;
+  color: #163f7b;
+}
+.detail-tag-code > span {
+  color: #536985;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.detail-tag-code strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.detail-information {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.detail-information-block {
+  min-width: 0;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid rgba(30, 98, 198, 0.15);
+}
+.detail-information-block h3,
+.detail-section-heading h3 {
+  margin: 0;
+  color: #234b7f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+.detail-information-block p {
+  margin: 6px 0 0;
+  color: #344b67;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.detail-information-technical {
+  padding-left: 12px;
+  border-left: 3px solid #4e7fc4;
+  border-bottom: 0;
+}
+.detail-attributes-section {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.detail-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.detail-section-heading > span {
+  color: #62758d;
+  font-size: 11px;
+  font-weight: 700;
+}
+.detail-attributes {
+  max-height: none;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.detail-attribute-item {
+  grid-template-columns: minmax(105px, 0.42fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+}
+.detail-attribute-item dt {
+  color: #426084;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.detail-attribute-item dd {
+  color: #203954;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.brand-theme-pienza .detail-eyebrow {
+  color: #8a5a18;
+}
+.brand-theme-pienza .detail-tag-code {
+  border-color: rgba(190, 130, 60, 0.3);
+  background: #fff8ec;
+  color: #4d2c0a;
+}
+.brand-theme-pienza .detail-tag-code > span {
+  color: #806443;
+}
+.brand-theme-pienza .detail-information-block {
+  border-bottom-color: rgba(190, 130, 60, 0.2);
+}
+.brand-theme-pienza .detail-information-block h3,
+.brand-theme-pienza .detail-section-heading h3 {
+  color: #714817;
+}
+.brand-theme-pienza .detail-information-block p {
+  color: #533a20;
+}
+.brand-theme-pienza .detail-information-technical {
+  border-left-color: #b8782e;
+  background: rgba(255, 246, 232, 0.75);
+}
+.brand-theme-pienza .detail-section-heading > span {
+  color: #806b50;
+}
+.brand-theme-pienza .detail-attribute-item dt {
+  color: #7a4e18;
+}
+.brand-theme-pienza .detail-attribute-item dd {
+  color: #4f3215;
+}
+
+@media (max-width: 640px) {
+  .detail-meta {
+    gap: 14px;
+  }
+  .detail-information-block {
+    padding: 10px 0 12px;
+  }
+  .detail-information-technical {
+    padding-left: 12px;
+  }
+  .detail-attributes {
+    padding: 4px 10px;
+  }
+  .detail-attribute-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+}
+
+/* Product cards: a calmer image surface, readable names and a quieter photo strip. */
+.product-card {
+  border-color: rgba(33, 65, 104, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 5px 18px rgba(24, 54, 91, 0.08), 0 1px 3px rgba(24, 54, 91, 0.04);
+}
+.product-card:hover {
+  border-color: rgba(39, 91, 157, 0.24);
+  box-shadow: 0 16px 34px rgba(24, 54, 91, 0.13), 0 3px 9px rgba(24, 54, 91, 0.06);
+}
+.media {
+  height: auto;
+  aspect-ratio: 4 / 3;
+  background: #f0f3f7;
+}
+.media img {
+  box-sizing: border-box;
+  object-fit: contain;
+  padding: 12px;
+  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.product-card:hover .media img {
+  transform: scale(1.035);
+}
+.media-overlay {
+  background: linear-gradient(180deg, rgba(13, 37, 70, 0.035), transparent 38%);
+}
+.chip {
+  z-index: 1;
+  padding: 6px 10px;
+  border-color: rgba(30, 58, 92, 0.08);
+  box-shadow: 0 3px 10px rgba(20, 40, 70, 0.08);
+  color: #344d6a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.chip-code {
+  background: rgba(255, 255, 255, 0.94);
+}
+.chip-category {
+  max-width: min(62%, calc(100% - 90px));
+  background: rgba(232, 240, 251, 0.94);
+  color: #315c8b;
+}
+.card-body {
+  display: grid;
+  gap: 0;
+  padding: 16px 16px 14px;
+}
+.card-body h3 {
+  min-height: calc(1.28em * 3);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+  -webkit-line-clamp: 3;
+  color: #193c68;
+  overflow-wrap: anywhere;
+}
+.description {
+  min-height: calc(1.5em * 2);
+  margin-top: 7px;
+  color: #65768b;
+  font-size: 12.5px;
+  line-height: 1.5;
+  -webkit-line-clamp: 2;
+}
+.expand-label {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(35, 78, 128, 0.1);
+  color: #285b9d;
+  font-size: 12px;
+  font-weight: 800;
+}
+.expand-label::after {
+  content: "→";
+}
+.thumb-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  padding: 11px 12px 12px;
+  border-top-color: rgba(35, 78, 128, 0.09);
+  background: #ffffff;
+}
+.thumb {
+  display: grid;
+  gap: 6px;
+}
+.thumb img,
+.thumb-placeholder {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  aspect-ratio: 1;
+  box-sizing: border-box;
+  padding: 5px;
+  border: 1px solid rgba(35, 78, 128, 0.12);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.thumb img {
+  object-fit: contain;
+}
+.thumb-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-style: dashed;
+  color: #8a98a9;
+}
+.thumb-placeholder svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+.thumb-placeholder span {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.thumb figcaption {
+  margin: 0;
+  color: #667b94;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.015em;
+  line-height: 1.2;
+  text-transform: none;
+  white-space: nowrap;
+}
+.brand-theme-pienza .product-card {
+  border-color: rgba(129, 86, 40, 0.14);
+}
+.brand-theme-pienza .product-card:hover {
+  border-color: rgba(169, 116, 53, 0.34);
+}
+.brand-theme-pienza .media {
+  background: #f3eee7;
+}
+.brand-theme-pienza .media-overlay {
+  background: linear-gradient(180deg, rgba(64, 43, 25, 0.035), transparent 38%);
+}
+.brand-theme-pienza .chip-code {
+  border-color: rgba(129, 86, 40, 0.13);
+  background: rgba(255, 252, 246, 0.96);
+  color: #68491f;
+}
+.brand-theme-pienza .chip-category {
+  border-color: rgba(169, 116, 53, 0.17);
+  background: rgba(250, 240, 221, 0.96);
+  color: #76501d;
+}
+.brand-theme-pienza .card-body h3 {
+  min-height: calc(1.28em * 3);
+  font-size: 17px;
+  line-height: 1.28;
+  color: #321e0f;
+}
+.brand-theme-pienza .card-body {
+  padding: 16px 16px 14px;
+}
+.brand-theme-pienza .description {
+  min-height: calc(1.5em * 2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #75634f;
+}
+.brand-theme-pienza .expand-label {
+  border-top-color: rgba(129, 86, 40, 0.15);
+  color: #865c22;
+}
+.brand-theme-pienza .thumb-strip {
+  border-top-color: rgba(129, 86, 40, 0.13);
+  background: #fffcf7;
+}
+.brand-theme-pienza .thumb img,
+.brand-theme-pienza .thumb-placeholder {
+  border-color: rgba(129, 86, 40, 0.16);
+  background: #faf6ef;
+}
+.brand-theme-pienza .thumb-placeholder {
+  color: #9e886a;
+}
+.brand-theme-pienza .thumb figcaption {
+  color: #816a4d;
+}
+
+@media (max-width: 640px) {
+  .card-body {
+    padding: 14px 14px 12px;
+  }
+  .thumb-strip {
+    gap: 8px;
+    padding: 10px;
+  }
+  .thumb figcaption {
+    font-size: 9px;
+  }
+  .brand-theme-pienza .card-body {
+    padding: 14px 14px 12px;
+  }
+}

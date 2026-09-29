@@ -14,7 +14,8 @@
     "CATALOG_SESSION_COOKIE_SECURE": "true",
     "CATALOG_SESSION_MAX_AGE_SECONDS": "300",
     "CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES": "5",
-    "CATALOG_MEDIA_BLOB_ENABLED": "false"
+    "CATALOG_MEDIA_BLOB_ENABLED": "false",
+    "CATALOG_ERP_BLOB_ENABLED": "true"
   },
   "functions": {
     "api/index.py": {
@@ -24,6 +25,14 @@
     }
   },
   "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/api/index.py?__catalog_path=/health"
+    },
+    {
+      "source": "/health/:path*",
+      "destination": "/api/index.py?__catalog_path=/health/:path*"
+    },
     {
       "source": "/catalog",
       "destination": "/api/index.py?__catalog_path=/catalog"

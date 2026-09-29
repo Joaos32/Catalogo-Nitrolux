@@ -22,6 +22,7 @@ MANAGED_USERS_BLOB_PATH = "catalogo/representative_users.json"
 MANAGED_USERS_S3_KEY = "private/representative_users.json"
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 390000
+MIN_REPRESENTATIVE_PASSWORD_LENGTH = 10
 PASSWORD_RESET_CODE_BYTES = 9
 PASSWORD_RESET_EXPIRES_MINUTES = 60
 
@@ -106,7 +107,7 @@ def _s3_registry_is_configured() -> bool:
         from .vercel_oidc import get_request_token
 
         return bool(get_request_token())
-    return False
+    return bool(config["bucket"] and os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 
 
 def representative_login_storage_is_configured() -> bool:
@@ -115,7 +116,11 @@ def representative_login_storage_is_configured() -> bool:
     config = _s3_registry_config()
     s3_configured = bool(
         config["bucket"]
-        and ((config["access_key"] and config["secret_key"]) or config["role_arn"])
+        and (
+            (config["access_key"] and config["secret_key"])
+            or config["role_arn"]
+            or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+        )
     )
     return bool(
         _parse_environment_representatives()
@@ -158,12 +163,14 @@ def _s3_registry_client():
             aws_secret_access_key=credentials["secret_key"],
             aws_session_token=credentials["session_token"],
         )
-    return boto3.client(
-        "s3",
-        region_name=config["region"],
-        aws_access_key_id=config["access_key"],
-        aws_secret_access_key=config["secret_key"],
-    )
+    if config["access_key"] and config["secret_key"]:
+        return boto3.client(
+            "s3",
+            region_name=config["region"],
+            aws_access_key_id=config["access_key"],
+            aws_secret_access_key=config["secret_key"],
+        )
+    return boto3.client("s3", region_name=config["region"])
 
 
 def _load_s3_payload() -> dict[str, Any]:
@@ -256,6 +263,10 @@ def hash_representative_password(password: str) -> str:
     normalized_password = _stringify(password)
     if not normalized_password:
         raise ValueError("Missing representative password")
+    if len(normalized_password) < MIN_REPRESENTATIVE_PASSWORD_LENGTH:
+        raise ValueError(
+            f"Representative passwords must have at least {MIN_REPRESENTATIVE_PASSWORD_LENGTH} characters"
+        )
 
     salt = secrets.token_bytes(16)
     derived_key = hashlib.pbkdf2_hmac(
@@ -681,8 +692,10 @@ def reset_representative_password_with_code(email: str, reset_code: str, new_pas
         raise ValueError("Missing reset code")
     if not normalized_password:
         raise ValueError("Missing new password")
-    if len(normalized_password) < 6:
-        raise ValueError("New password must have at least 6 characters")
+    if len(normalized_password) < MIN_REPRESENTATIVE_PASSWORD_LENGTH:
+        raise ValueError(
+            f"New password must have at least {MIN_REPRESENTATIVE_PASSWORD_LENGTH} characters"
+        )
 
     raw_managed_users = _load_managed_users_raw()
     raw_user = next(

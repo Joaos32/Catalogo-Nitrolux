@@ -11,7 +11,7 @@ param(
     [string]$RepresentativeUsersJson = $env:CATALOG_REPRESENTATIVE_USERS_JSON,
     [string]$GoogleDriveFolderId = $env:CATALOG_GOOGLE_DRIVE_FOLDER_ID,
     [string]$GoogleDriveApiKey = $env:CATALOG_GOOGLE_DRIVE_API_KEY,
-    [string]$CorsAllowOrigins = "https://catalog.invalid",
+    [string]$CorsAllowOrigins = "",
     [string]$MediaPrefix = "produtos/",
     [string]$MediaSource = "",
     [switch]$UseContainer,
@@ -71,16 +71,45 @@ if ([string]::IsNullOrWhiteSpace($AdminLoginEmail) -or [string]::IsNullOrWhiteSp
     throw "Defina CATALOG_ADMIN_LOGIN_EMAIL e CATALOG_ADMIN_LOGIN_PASSWORD para o deploy de producao."
 }
 
-if (-not [string]::IsNullOrWhiteSpace($RepresentativeUsersJson)) {
-    try {
-        $representatives = $RepresentativeUsersJson | ConvertFrom-Json
-        if ($null -eq $representatives) {
-            throw "JSON vazio"
-        }
+if ([string]::IsNullOrWhiteSpace($RepresentativeUsersJson)) {
+    throw "Defina CATALOG_REPRESENTATIVE_USERS_JSON com ao menos um representante para proteger o catalogo."
+}
+
+try {
+    $representativePayload = ConvertFrom-Json -InputObject $RepresentativeUsersJson
+    if ($representativePayload -is [System.Array]) {
+        $representativeCandidates = @($representativePayload)
     }
-    catch {
-        throw "CATALOG_REPRESENTATIVE_USERS_JSON nao contem JSON valido: $($_.Exception.Message)"
+    elseif ($null -ne $representativePayload.users) {
+        $representativeCandidates = @($representativePayload.users)
     }
+    else {
+        $representativeCandidates = @($representativePayload)
+    }
+}
+catch {
+    throw "CATALOG_REPRESENTATIVE_USERS_JSON nao contem JSON valido: $($_.Exception.Message)"
+}
+
+$hasValidRepresentative = $false
+foreach ($candidate in $representativeCandidates) {
+    $email = [string]$candidate.email
+    if ([string]::IsNullOrWhiteSpace($email)) {
+        $email = [string]$candidate.login
+    }
+    $password = [string]$candidate.password
+    $passwordHash = [string]$candidate.password_hash
+    if ([string]::IsNullOrWhiteSpace($passwordHash)) {
+        $passwordHash = [string]$candidate.passwordHash
+    }
+    if (-not [string]::IsNullOrWhiteSpace($email) -and
+        ($password.Length -ge 10 -or $passwordHash.StartsWith("pbkdf2_sha256$"))) {
+        $hasValidRepresentative = $true
+        break
+    }
+}
+if (-not $hasValidRepresentative) {
+    throw "CATALOG_REPRESENTATIVE_USERS_JSON deve conter um email e senha com 10+ caracteres ou password_hash PBKDF2."
 }
 
 if ($UseContainer) {

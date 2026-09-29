@@ -17,6 +17,7 @@ export const API_BASES = configuredBases.length > 0 ? configuredBases : DEFAULT_
 export const REQUEST_TIMEOUT_MS =
   Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 12000;
 export const UI_STATE_STORAGE_KEY = "catalog.ui.v2";
+export const PHOTO_CACHE_STORAGE_KEY = "catalog.photos.v1";
 
 function escapeSvgText(value: string): string {
   return String(value)

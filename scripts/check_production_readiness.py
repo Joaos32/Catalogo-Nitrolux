@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -67,6 +68,26 @@ def _add_required_secret(errors: list[str], values: dict[str, str], key: str) ->
         errors.append(f"{key} must be set to a unique secret with at least 32 characters.")
 
 
+def _has_login_credential(user: object) -> bool:
+    if not isinstance(user, dict):
+        return False
+    email = str(user.get("email") or user.get("login") or "").strip()
+    password = str(user.get("password") or "").strip()
+    password_hash = str(user.get("password_hash") or user.get("passwordHash") or "").strip()
+    return bool(email and (len(password) >= 10 or password_hash.startswith("pbkdf2_sha256$")))
+
+
+def _representative_users_from_json(raw_value: str) -> list[object]:
+    parsed = json.loads(raw_value)
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict) and isinstance(parsed.get("users"), list):
+        return parsed["users"]
+    if isinstance(parsed, dict):
+        return [parsed]
+    return []
+
+
 def _validate_backend(values: dict[str, str]) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -88,7 +109,9 @@ def _validate_backend(values: dict[str, str]) -> tuple[list[str], list[str]]:
 
     origins = _csv_values(values.get("CATALOG_CORS_ALLOW_ORIGINS", ""))
     if not origins:
-        errors.append("CATALOG_CORS_ALLOW_ORIGINS must contain the final frontend origin.")
+        warnings.append(
+            "CATALOG_CORS_ALLOW_ORIGINS is empty; this is appropriate for a same-origin deployment."
+        )
     if "*" in origins:
         errors.append("CATALOG_CORS_ALLOW_ORIGINS must not contain '*'.")
     if any(_has_local_marker(origin) for origin in origins):
@@ -99,13 +122,48 @@ def _validate_backend(values: dict[str, str]) -> tuple[list[str], list[str]]:
     if not has_admin_login and not has_admin_token:
         errors.append("Configure admin access with CATALOG_ADMIN_LOGIN_PASSWORD, CATALOG_ADMIN_USERS_FILE, or CATALOG_ERP_ADMIN_TOKEN.")
 
-    has_representatives = bool(
-        values.get("CATALOG_REPRESENTATIVE_LOGIN_PASSWORD")
-        or values.get("CATALOG_REPRESENTATIVE_USERS_JSON")
-        or values.get("CATALOG_REPRESENTATIVE_USERS_FILE")
+    if not _is_true(values.get("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN", "")):
+        errors.append("CATALOG_REQUIRE_REPRESENTATIVE_LOGIN must be true in production.")
+
+    has_representatives = False
+    users_json = values.get("CATALOG_REPRESENTATIVE_USERS_JSON", "").strip()
+    if users_json:
+        try:
+            has_representatives = any(
+                _has_login_credential(user)
+                for user in _representative_users_from_json(users_json)
+            )
+        except json.JSONDecodeError:
+            errors.append("CATALOG_REPRESENTATIVE_USERS_JSON must contain valid JSON.")
+
+    single_user = {
+        "email": values.get("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", ""),
+        "password": values.get("CATALOG_REPRESENTATIVE_LOGIN_PASSWORD", ""),
+    }
+    has_representatives = has_representatives or _has_login_credential(single_user)
+
+    users_file = values.get("CATALOG_REPRESENTATIVE_USERS_FILE", "").strip()
+    if users_file and Path(users_file).is_file():
+        try:
+            has_representatives = has_representatives or any(
+                _has_login_credential(user)
+                for user in _representative_users_from_json(
+                    Path(users_file).read_text(encoding="utf-8")
+                )
+            )
+        except (OSError, json.JSONDecodeError):
+            errors.append("CATALOG_REPRESENTATIVE_USERS_FILE must point to a valid JSON login registry.")
+
+    has_remote_representative_registry = bool(
+        values.get("CATALOG_REPRESENTATIVE_S3_BUCKET")
+        or values.get("BLOB_READ_WRITE_TOKEN")
     )
-    if not has_representatives:
-        warnings.append("No representative login source is configured; the public catalog routes will be open.")
+    if not has_representatives and not has_remote_representative_registry:
+        errors.append("Configure at least one representative email and password/password_hash.")
+    elif not has_representatives:
+        warnings.append(
+            "A remote representative registry is configured; confirm it contains an active user with /health/ready after deployment."
+        )
 
     if not values.get("CATALOG_S3_MEDIA_BUCKET"):
         warnings.append("CATALOG_S3_MEDIA_BUCKET is empty; Lambda production will not have the local photo folder.")

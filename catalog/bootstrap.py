@@ -107,7 +107,8 @@ def _configure_representative_idle_timeout(app: FastAPI) -> None:
             get_representative_claims,
         )
 
-        claims = get_representative_claims(
+        is_health_probe = request.url.path == "/health" or request.url.path.startswith("/health/")
+        claims = None if is_health_probe else get_representative_claims(
             request,
             request.headers.get("authorization"),
         )
@@ -126,6 +127,7 @@ def _configure_representative_idle_timeout(app: FastAPI) -> None:
                 {
                     "email": str(claims.get("email") or claims.get("sub") or ""),
                     "name": str(claims.get("name") or claims.get("email") or "Representante"),
+                    "_credential_version": str(claims.get("credential_version") or ""),
                 }
             )
             _set_representative_cookie(response, request, refreshed_token)

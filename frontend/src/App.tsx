@@ -6,6 +6,7 @@ import ExportActions from "./components/ExportActions";
 import ProductCard from "./components/ProductCard";
 import ProductDetail from "./components/ProductDetail";
 import {
+  ApiRequestError,
   downloadCatalogExport,
   fetchRepresentativeSession,
   fetchImagesByCode,
@@ -22,12 +23,34 @@ import {
   normalizeProduct,
   normalizeText,
 } from "./lib/catalog-products";
-import { persistUiState, readPersistedUiState } from "./lib/catalog-storage";
+import {
+  persistPhotosByCode,
+  persistUiState,
+  readPersistedPhotos,
+  readPersistedUiState,
+} from "./lib/catalog-storage";
 import type { CatalogBrand, CatalogExportFormat, CatalogProduct, ProductPhotos } from "./types";
 
 type PhotosByProductId = Record<string, ProductPhotos>;
 const INITIAL_PRODUCTS_LIMIT = 15;
 const BRAND_ORDER: CatalogBrand[] = ["nitrolux", "pienza"];
+
+function mergePhotoSources(...sources: Array<ProductPhotos | null | undefined>): ProductPhotos | null {
+  const merged: ProductPhotos = {};
+  const fields: Array<keyof ProductPhotos> = ["white_background", "ambient", "measures"];
+
+  for (const source of sources) {
+    if (!source) continue;
+    for (const field of fields) {
+      if (!merged[field] && source[field]) {
+        merged[field] = source[field];
+      }
+    }
+  }
+
+  return hasAnyPhoto(merged) ? merged : null;
+}
+
 const BRAND_META: Record<
   CatalogBrand,
   {
@@ -67,6 +90,10 @@ function useCatalogProducts() {
     queryKey: ["catalog-products"],
     queryFn: fetchProducts,
     staleTime: 60_000,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiRequestError && error.status < 500) return false;
+      return failureCount < 2;
+    },
   });
 }
 
@@ -100,6 +127,7 @@ export default function App(): JSX.Element {
   const [query, setQuery] = useState(initialUiState.query);
   const [category, setCategory] = useState(initialUiState.category);
   const [brand, setBrand] = useState<CatalogBrand>(initialUiState.brand);
+  const [persistedPhotosByCode, setPersistedPhotosByCode] = useState(readPersistedPhotos);
   const [isLoggingOutRepresentative, setIsLoggingOutRepresentative] = useState(false);
   const [visibleProductCount, setVisibleProductCount] = useState(responsiveProductsBatch);
 
@@ -118,6 +146,18 @@ export default function App(): JSX.Element {
     const source = productsQuery.data && productsQuery.data.length > 0 ? productsQuery.data : DEMO_PRODUCTS;
     return source.map((item, index) => normalizeProduct(item, index));
   }, [productsQuery.data]);
+
+  useEffect(() => {
+    const embeddedPhotos = Object.fromEntries(
+      products
+        .filter((item) => hasAnyPhoto(item.photos))
+        .map((item) => [item.code, item.photos])
+    );
+    if (Object.keys(embeddedPhotos).length === 0) return;
+
+    persistPhotosByCode(embeddedPhotos);
+    setPersistedPhotosByCode(readPersistedPhotos());
+  }, [products]);
 
   const selectedProduct = useMemo(() => {
     if (!productId) return null;
@@ -217,31 +257,37 @@ export default function App(): JSX.Element {
   const embeddedPhotosByProductId = useMemo(() => {
     const entries = new Map<string, ProductPhotos>();
     for (const item of visibleProducts) {
-      if (hasAnyPhoto(item.photos)) {
-        entries.set(item.id, item.photos);
+      const photos = mergePhotoSources(item.photos, persistedPhotosByCode[item.code]);
+      if (photos) {
+        entries.set(item.id, photos);
       }
     }
-    if (selectedProduct && hasAnyPhoto(selectedProduct.photos)) {
-      entries.set(selectedProduct.id, selectedProduct.photos);
+    if (selectedProduct) {
+      const photos = mergePhotoSources(selectedProduct.photos, persistedPhotosByCode[selectedProduct.code]);
+      if (photos) {
+        entries.set(selectedProduct.id, photos);
+      }
     }
     return Object.fromEntries(entries) as PhotosByProductId;
-  }, [selectedProduct, visibleProducts]);
+  }, [persistedPhotosByCode, selectedProduct, visibleProducts]);
 
   const photoTargets = useMemo(() => {
     if (productId && !galleryQuery.isError) {
       return [];
     }
 
-    const targets = visibleProducts.filter((item) => !hasAnyPhoto(item.photos));
+    const targets = visibleProducts.filter(
+      (item) => !mergePhotoSources(item.photos, persistedPhotosByCode[item.code])
+    );
     if (
       selectedProduct &&
-      !hasAnyPhoto(selectedProduct.photos) &&
+      !mergePhotoSources(selectedProduct.photos, persistedPhotosByCode[selectedProduct.code]) &&
       !targets.some((item) => item.id === selectedProduct.id)
     ) {
       targets.push(selectedProduct);
     }
     return targets;
-  }, [galleryQuery.isError, productId, selectedProduct, visibleProducts]);
+  }, [galleryQuery.isError, persistedPhotosByCode, productId, selectedProduct, visibleProducts]);
 
   const photoQueryKey = useMemo(
     () => [
@@ -274,19 +320,31 @@ export default function App(): JSX.Element {
 
         const code = product.code || product.id;
         const payload = remotePhotos[code] || null;
-        const previous = previousPhotos[product.id] || null;
-        const merged: ProductPhotos = {
-          white_background: payload?.white_background || previous?.white_background || null,
-          ambient: payload?.ambient || previous?.ambient || null,
-          measures: payload?.measures || previous?.measures || null,
-        };
-        const normalized = hasAnyPhoto(merged) ? merged : fallbackPhotos(code);
+        const previous = previousPhotos[product.id] || persistedPhotosByCode[code] || null;
+        const normalized =
+          mergePhotoSources(payload, previous) || fallbackPhotos(code);
         return [product.id, normalized] as const;
       });
 
       return Object.fromEntries(entries) as PhotosByProductId;
     },
   });
+
+  useEffect(() => {
+    if (!photosQuery.data) return;
+
+    // React Query is only in memory. Save real photo URLs so the two catalog
+    // brands can render them immediately after a full page reload.
+    persistPhotosByCode(
+      Object.fromEntries(
+        Object.entries(photosQuery.data).map(([productId, photos]) => {
+          const product = products.find((item) => item.id === productId);
+          return [product?.code || productId, photos];
+        })
+      )
+    );
+    setPersistedPhotosByCode(readPersistedPhotos());
+  }, [photosQuery.data, products]);
 
   const photosByProductId = useMemo(
     () => ({ ...embeddedPhotosByProductId, ...(photosQuery.data || {}) }),
@@ -486,7 +544,19 @@ export default function App(): JSX.Element {
                   : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}`}
             </p>
 
-            {productsError && <div className="banner banner-warning">{productsError}</div>}
+            {productsError && (
+              <div className="banner banner-warning" role="alert">
+                {productsError}{" "}
+                <button
+                  type="button"
+                  className="hero-link-button"
+                  onClick={() => void productsQuery.refetch()}
+                  disabled={productsQuery.isFetching}
+                >
+                  {productsQuery.isFetching ? "Tentando novamente..." : "Tentar novamente"}
+                </button>
+              </div>
+            )}
             {emptyError && <div className="banner banner-warning">{emptyError}</div>}
             {!productsError && !emptyError && loadingPhotos && (
               <div className="banner banner-info">Carregando fotos dos produtos...</div>

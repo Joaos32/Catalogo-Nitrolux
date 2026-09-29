@@ -167,6 +167,32 @@ function triggerBrowserDownload(url: string, filename: string): void {
   link.remove();
 }
 
+function resolveDownloadImageUrl(value: string): string {
+  const targetUrl = absolutizeApiUrl(value);
+  if (!targetUrl) return "";
+
+  try {
+    const parsed = new URL(targetUrl, getActiveApiOrigin());
+    const isGoogleDriveUrl =
+      ["drive.google.com", "www.drive.google.com"].includes(parsed.hostname.toLowerCase()) &&
+      ["/thumbnail", "/uc"].includes(parsed.pathname);
+    const fileId = parsed.searchParams.get("id")?.trim();
+
+    if (isGoogleDriveUrl && fileId) {
+      const proxyUrl = new URL(
+        `/catalog/media/google-drive/${encodeURIComponent(fileId)}`,
+        getActiveApiOrigin()
+      );
+      proxyUrl.searchParams.set("size", "detail");
+      return proxyUrl.toString();
+    }
+  } catch {
+    // Mantém a URL original para fontes que não usam o Google Drive.
+  }
+
+  return targetUrl;
+}
+
 export async function downloadCatalogExport(options: CatalogExportOptions): Promise<void> {
   let lastError: unknown = null;
 
@@ -203,11 +229,11 @@ export async function downloadCatalogExport(options: CatalogExportOptions): Prom
 }
 
 export async function downloadImageFile(url: string, filenameBase: string): Promise<void> {
-  const targetUrl = absolutizeApiUrl(url);
+  const targetUrl = resolveDownloadImageUrl(url);
   const safeBase = sanitizeDownloadName(filenameBase, "imagem-produto");
 
   try {
-    const response = await fetchWithTimeout(targetUrl);
+    const response = await fetchWithTimeout(targetUrl, { credentials: "include" });
     if (!response.ok) {
       throw new Error(`Resposta não-ok para ${targetUrl}: ${response.status}`);
     }
@@ -218,9 +244,10 @@ export async function downloadImageFile(url: string, filenameBase: string): Prom
     triggerBrowserDownload(objectUrl, `${safeBase}${extension}`);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   } catch (error) {
-    console.warn(`Falha ao baixar imagem em ${targetUrl}. Abrindo fallback do navegador.`, error);
-    const extension = inferExtensionFromUrl(targetUrl);
-    triggerBrowserDownload(targetUrl, `${safeBase}${extension}`);
+    // Uma âncora para uma URL externa ignora o atributo `download` e abre a
+    // imagem em outra aba. Não navegue como fallback: preserve o contrato de
+    // download e deixe a falha visível no console para diagnóstico.
+    console.warn(`Falha ao baixar imagem em ${targetUrl}.`, error);
   }
 }
 
@@ -392,10 +419,13 @@ function normalizePhotos(payload: unknown): ProductPhotos | null {
 }
 
 export async function fetchProducts(): Promise<ProductRecord[]> {
-  const payload = await fetchFromBases<unknown>((base) => `${base}/catalog/local/produtos`, {
+  const payload = await requestJsonFromBases<unknown>((base) => `${base}/catalog/local/produtos`, {
     credentials: "include",
   });
-  return Array.isArray(payload) ? (payload as ProductRecord[]) : [];
+  if (!Array.isArray(payload)) {
+    throw new Error("A resposta do catálogo tem um formato inválido.");
+  }
+  return payload as ProductRecord[];
 }
 
 export async function fetchPhotosByCode(code: string): Promise<ProductPhotos | null> {

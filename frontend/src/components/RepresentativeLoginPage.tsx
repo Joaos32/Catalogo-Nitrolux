@@ -119,8 +119,8 @@ export default function RepresentativeLoginPage(): JSX.Element {
       setNotice({ tone: "warning", text: "Informe o código de recuperação." });
       return;
     }
-    if (normalizedPassword.length < 6) {
-      setNotice({ tone: "warning", text: "A nova senha precisa ter pelo menos 6 caracteres." });
+    if (normalizedPassword.length < 10) {
+      setNotice({ tone: "warning", text: "A nova senha precisa ter pelo menos 10 caracteres." });
       return;
     }
     if (normalizedPassword !== normalizedConfirmation) {

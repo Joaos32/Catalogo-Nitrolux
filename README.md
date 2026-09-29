@@ -109,7 +109,7 @@ Também há suporte à classificação de diferentes tipos de fotos de produto e
 - Microsoft Graph;
 - Microsoft Entra ID;
 - PostgreSQL opcional para dados de embalagem;
-- arquivos JSON para o espelho ativo do ERP e os cadastros locais de acesso.
+- S3 privado/AWS ou Vercel Blob para o snapshot ativo do ERP e o cadastro gerenciado de representantes.
 
 ### Infraestrutura
 
@@ -336,7 +336,7 @@ Variáveis vazias são opcionais, salvo quando o recurso correspondente está ha
 | `CATALOG_HOST` | `127.0.0.1` | Host do Uvicorn. |
 | `CATALOG_PORT` | `8000` | Porta da API. |
 | `CATALOG_ENABLE_API_DOCS` | `true` | Habilita Swagger, ReDoc e OpenAPI. |
-| `CATALOG_CORS_ALLOW_ORIGINS` | origens locais | Lista CSV de origens permitidas. |
+| `CATALOG_CORS_ALLOW_ORIGINS` | origens locais; vazio desativa CORS | Lista CSV de origens permitidas. |
 | `CATALOG_CORS_ALLOW_CREDENTIALS` | `true` | Permite credenciais no CORS. |
 | `CATALOG_LOG_LEVEL` | `INFO` | Nível do logging Python. |
 | `CATALOG_LOG_FORMAT` | formato com data, nível e logger | Formato das mensagens de log. |
@@ -358,8 +358,14 @@ Variáveis vazias são opcionais, salvo quando o recurso correspondente está ha
 | `CATALOG_REPRESENTATIVE_LOGIN_NAME` | e-mail/`Representante` | Nome exibido para o representante único. |
 | `CATALOG_REPRESENTATIVE_USERS_JSON` | vazio | Lista JSON de representantes configurados por ambiente. |
 | `CATALOG_REPRESENTATIVE_USERS_FILE` | `reports/representative_users.json` | JSON de representantes gerenciados. |
+| `CATALOG_REPRESENTATIVE_S3_BUCKET` | vazio | Bucket privado para o cadastro gerenciado de representantes; configurado pelo SAM. |
+| `CATALOG_REPRESENTATIVE_S3_KEY` | `private/representative_users.json` | Caminho do cadastro gerenciado no S3. |
+| `CATALOG_REPRESENTATIVE_S3_REGION` | `sa-east-1` | Região do bucket S3 do cadastro. |
+| `CATALOG_REPRESENTATIVE_BLOB_PATH` | `catalogo/representative_users.json` | Caminho do cadastro de representantes no Vercel Blob. |
 | `CATALOG_REPRESENTATIVE_JWT_SECRET` | `CATALOG_SESSION_SECRET` | Segredo HMAC dedicado aos JWTs de representantes. |
 | `CATALOG_REPRESENTATIVE_JWT_EXPIRES_MINUTES` | `720` | Validade do JWT em minutos. |
+| `CATALOG_AUTH_RATE_LIMIT_TABLE` | vazio | Tabela DynamoDB compartilhada para tentativas de autenticação; configurada pelo SAM. |
+| `CATALOG_AUTH_TRUSTED_PROXY_HOPS` | `0` | Número de proxies confiáveis para ler `X-Forwarded-For`; deixe `0` se não for necessário. |
 | `CATALOG_SESSION_SECRET` | aleatório por processo | Assina a sessão administrativa; obrigatório e estável em produção. |
 | `CATALOG_SESSION_MAX_AGE_SECONDS` | `43200` | Duração máxima da sessão administrativa. |
 | `CATALOG_SESSION_COOKIE_SECURE` | `false` | Marca o cookie de sessão como `Secure`. |
@@ -378,6 +384,10 @@ Variáveis vazias são opcionais, salvo quando o recurso correspondente está ha
 | `CATALOG_CADASTRO_HTML` | autodetecção | Caminho do cadastro HTML. |
 | `CATALOG_TECHNICAL_SPECS_PATH` | `reports/technical_specs.txt` | Arquivo de especificações técnicas por código. |
 | `CATALOG_ERP_JSON_PATH` | autodetecção | Caminho do espelho JSON ativo do ERP. |
+| `CATALOG_ERP_S3_BUCKET` | vazio | Bucket privado para o snapshot ERP ativo; configurado pelo SAM. |
+| `CATALOG_ERP_S3_KEY` | `catalog/erp_products.json` | Chave do snapshot ERP ativo no S3. |
+| `CATALOG_ERP_BLOB_ENABLED` | `false` | Habilita snapshot ERP ativo no Vercel Blob quando há token configurado. |
+| `CATALOG_ERP_BLOB_PATH` | `catalogo/erp_products.json` | Caminho do snapshot ERP ativo no Vercel Blob. |
 | `CATALOG_ERP_INBOX_DIR` | `reports/erp_inbox` | Diretório de arquivos enviados para revisão/importação. |
 | `CATALOG_ERP_SOURCE_DIRS` | diretórios internos conhecidos | Pastas CSV adicionais para descoberta de JSON ERP. |
 | `CATALOG_ERP_AUTO_DISCOVERY` | `true` | Habilita descoberta automática de arquivos ERP. |
@@ -397,6 +407,10 @@ Variáveis vazias são opcionais, salvo quando o recurso correspondente está ha
 | `CATALOG_S3_MEDIA_PUBLIC_BASE_URL` | URL regional do S3 | Base pública ou distribuição CloudFront. |
 | `CATALOG_S3_MEDIA_PRESIGNED_URLS` | `false` | Gera URLs pré-assinadas. |
 | `CATALOG_S3_MEDIA_PRESIGNED_EXPIRES_SECONDS` | `3600` | Validade das URLs pré-assinadas. |
+| `CATALOG_MEDIA_BLOB_ENABLED` | `false` | Habilita fotos privadas no Vercel Blob. |
+| `CATALOG_MEDIA_BLOB_PREFIX` | `catalogo/media/` | Prefixo dos objetos de imagem no Blob. |
+| `CATALOG_MEDIA_BLOB_TOKEN` | `BLOB_READ_WRITE_TOKEN` | Token do Blob; mantenha-o somente no ambiente server-side. |
+| `BLOB_READ_WRITE_TOKEN` | fornecido pela Vercel | Credencial usada para o cadastro de representantes e, com o recurso habilitado, mídia e snapshot ERP privados. |
 | `CATALOG_GOOGLE_DRIVE_FOLDER_ID` | vazio | ID ou URL da pasta compartilhada. |
 | `CATALOG_GOOGLE_DRIVE_API_KEY` | vazio | Chave da Google Drive API. |
 | `CATALOG_GOOGLE_DRIVE_RECURSIVE` | `true` | Percorre subpastas. |
@@ -429,7 +443,6 @@ Variáveis vazias são opcionais, salvo quando o recurso correspondente está ha
 | `VITE_DEV_PROXY_TARGET` | `http://127.0.0.1:8000` | Destino do proxy Vite para `/catalog` e `/auth`. |
 | `AWS_REGION` | definido pelo runtime AWS | Região usada pelo cliente S3. |
 | `AWS_DEFAULT_REGION` | definido pelo ambiente AWS | Fallback de região para o cliente S3. |
-| `CATALOG_DATA_TABLE_NAME` | definido pelo SAM | Nome da tabela DynamoDB provisionada; ainda não é lida pelo código da aplicação. |
 
 ---
 
@@ -494,11 +507,12 @@ Com a documentação habilitada, o contrato OpenAPI completo fica disponível em
 
 O projeto não usa um banco transacional como fonte principal do catálogo nesta versão.
 
-- **ERP:** persistido em arquivo JSON normalizado, com metadados da importação e resumo de alterações;
-- **acessos locais:** persistidos em `reports/admin_users.json` e `reports/representative_users.json`, ambos ignorados pelo Git;
+- **ERP:** snapshot ativo persistido no S3 privado da AWS ou no Vercel Blob; em desenvolvimento local, usa JSON. Arquivos enviados para prévia continuam temporários;
+- **representantes:** cadastro gerenciado persistido em S3 na AWS ou Vercel Blob; usuários de ambiente podem servir como configuração inicial;
+- **administradores locais:** persistidos em `reports/admin_users.json`, ignorado pelo Git;
 - **PostgreSQL:** integração opcional e somente leitura para enriquecer embalagem e caixa master por código.
 
-Não existem ORM nem migrations. A consulta PostgreSQL usa Psycopg e identificadores configuráveis validados antes da montagem do SQL. Na Lambda, arquivos mutáveis não são persistência durável; use variáveis para os usuários iniciais e migre as gravações administrativas antes de tratar o painel como sistema transacional.
+Não existem ORM nem migrations. A consulta PostgreSQL usa Psycopg e identificadores configuráveis validados antes da montagem do SQL. Na AWS, o bucket de estado tem versionamento e o DynamoDB guarda contadores temporários de autenticação. No Vercel, conecte um Blob privado antes de promover a aplicação.
 
 ---
 
@@ -525,7 +539,7 @@ O arquivo `template.yaml` concentra a definição principal da infraestrutura ve
 ## Roadmap
 
 - ampliar testes de integração e ponta a ponta;
-- evoluir persistência de dados operacionais;
+- avaliar banco transacional caso o volume de operações administrativas cresça;
 - reforçar observabilidade e métricas;
 - melhorar automação de deploy;
 - ampliar documentação de decisões arquiteturais;

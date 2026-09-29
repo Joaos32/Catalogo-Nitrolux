@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from api import index as vercel_entrypoint
@@ -38,3 +41,31 @@ def test_vercel_entrypoint_serves_existing_auth_route():
 
     assert response.status_code == 200
     assert "authenticated" in response.json()
+
+
+def test_vercel_entrypoint_serves_health_probe_after_rewrite():
+    client = TestClient(vercel_entrypoint.app)
+
+    response = client.get(
+        "/api/index.py",
+        params={"__catalog_path": "/health/live"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "live"}
+
+
+def test_vercel_routes_public_health_paths_to_the_api_function():
+    config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text("utf-8"))
+    rewrites = config["rewrites"]
+
+    assert any(
+        item["source"] == "/health"
+        and item["destination"] == "/api/index.py?__catalog_path=/health"
+        for item in rewrites
+    )
+    assert any(
+        item["source"] == "/health/:path*"
+        and item["destination"] == "/api/index.py?__catalog_path=/health/:path*"
+        for item in rewrites
+    )

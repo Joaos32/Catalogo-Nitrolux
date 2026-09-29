@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import threading
+import time
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -23,6 +24,8 @@ router = APIRouter(dependencies=[Depends(require_representative_access)])
 logger = logging.getLogger(__name__)
 CATALOG_CACHE_CONTROL = "private, no-cache"
 _catalog_build_lock = threading.Lock()
+_CATALOG_PAYLOAD_TTL_SECONDS = 10
+_catalog_payload_refreshed_at = 0.0
 
 
 def _serialize_catalog_products() -> tuple[bytes, str]:
@@ -41,8 +44,13 @@ def _cached_vercel_catalog_payload() -> tuple[bytes, str]:
 
 
 def _catalog_payload() -> tuple[bytes, str]:
+    global _catalog_payload_refreshed_at
     if str(os.getenv("VERCEL") or "").strip().lower() in {"1", "true", "yes"}:
         with _catalog_build_lock:
+            now = time.monotonic()
+            if now - _catalog_payload_refreshed_at >= _CATALOG_PAYLOAD_TTL_SECONDS:
+                _cached_vercel_catalog_payload.cache_clear()
+                _catalog_payload_refreshed_at = now
             return _cached_vercel_catalog_payload()
     return _serialize_catalog_products()
 

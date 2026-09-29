@@ -7,11 +7,15 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
+import threading
+import tempfile
 import unicodedata
 from urllib.parse import quote
 from typing import Any, Dict, List
 
 from .technical_specs import resolve_technical_specs
+from .erp_storage import ERPWriteConflictError, load_active as load_remote_erp, storage_uri, write_active as write_remote_erp
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -19,6 +23,7 @@ DEFAULT_ERP_JSON_PATH = BASE_DIR / "reports" / "erp_products.json"
 DEFAULT_ERP_INBOX_DIR = BASE_DIR / "reports" / "erp_inbox"
 DEFAULT_ERP_DROP_DIR = BASE_DIR / "catalog" / "json"
 CATALOG_META_KEY = "catalog_meta"
+_ERP_MUTATION_LOCK = threading.RLock()
 PRODUCT_CONTAINER_KEYS = (
     "produtos",
     "products",
@@ -40,6 +45,16 @@ DISCOVERY_PATTERNS = (
 JSON_TEXT_ENCODINGS = ("utf-8-sig", "utf-16", "latin-1")
 PREVIEW_SAMPLE_SIZE = 8
 PREVIEW_CHANGE_SAMPLE_SIZE = 8
+CATALOG_RESPONSE_CACHES = {
+    "catalog.api.endpoints.catalog": ("_cached_vercel_catalog_payload",),
+    "catalog.api.endpoints.export": ("_cached_export",),
+    "catalog.api.endpoints.integration": (
+        "_integration_catalog_products",
+        "_integration_catalog_payload",
+        "_pienza_products_payload",
+    ),
+    "catalog.services.catalog_service": ("_cached_catalog_products",),
+}
 CHANGE_FIELD_LABELS = {
     "nome": "Nome",
     "categoria": "Categoria",
@@ -52,6 +67,45 @@ CHANGE_FIELD_LABELS = {
     "codepto": "CODEPTO",
     "codsec": "CODSEC",
 }
+
+
+def _atomic_write_bytes(target: Path, content: bytes) -> None:
+    """Replace a file only after its complete contents are safely written."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, target)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _invalidate_catalog_response_caches() -> None:
+    """Clear process-local catalog snapshots after a successful ERP write."""
+    for module_name, function_names in CATALOG_RESPONSE_CACHES.items():
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        for function_name in function_names:
+            cached_function = getattr(module, function_name, None)
+            clear_cache = getattr(cached_function, "cache_clear", None)
+            if clear_cache:
+                clear_cache()
 
 CODE_ALIASES = (
     "Codigo",
@@ -981,15 +1035,18 @@ def import_erp_payload(payload: Any, deployment_source: Dict[str, Any] | None = 
     if not index:
         raise ValueError("no valid product records with code found in ERP payload")
 
-    imported_at = datetime.now(timezone.utc).isoformat()
-    base_payload = _load_existing_erp_payload() if _resolve_json_target_path().is_file() else {}
-    return _write_erp_products(
-        list(index.values()),
-        base_payload=base_payload,
-        imported_at=imported_at,
-        deployment_source=deployment_source,
-        persist_change_summary=True,
-    )
+    with _ERP_MUTATION_LOCK:
+        imported_at = datetime.now(timezone.utc).isoformat()
+        base_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot()
+        return _write_erp_products(
+            list(index.values()),
+            base_payload=base_payload,
+            imported_at=imported_at,
+            deployment_source=deployment_source,
+            persist_change_summary=True,
+            expected_remote_etag=etag,
+            expected_remote_missing=remote_expected_missing,
+        )
 
 
 def import_erp_file(file_path: str) -> Dict[str, Any]:
@@ -1014,7 +1071,7 @@ def _store_uploaded_file(filename: str, content: bytes) -> Dict[str, Any]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         target = inbox_dir / f"{target.stem}_{stamp}{target.suffix}"
 
-    target.write_bytes(content)
+    _atomic_write_bytes(target, content)
     stored = _build_source_metadata(target)
     return {
         "path": str(target),
@@ -1049,6 +1106,7 @@ def preview_erp_file(file_path: str) -> Dict[str, Any]:
     active_meta = _extract_catalog_meta(active_payload)
     deployed_source = _resolve_deployed_source_path(_extract_catalog_meta(_load_existing_erp_payload()))
     resolved_source = source.resolve(strict=False)
+    active_source = _stringify(active_meta.get("source_path"))
     source_stat = source.stat()
     compared_to_path = _stringify(active_meta.get("source_path"))
     compared_to_name = _stringify(active_meta.get("source_name"))
@@ -1064,7 +1122,8 @@ def preview_erp_file(file_path: str) -> Dict[str, Any]:
         source_name=source.name,
         source_size_bytes=source_stat.st_size,
         source_updated_at=datetime.fromtimestamp(source_stat.st_mtime, tz=timezone.utc).isoformat(),
-        is_active=resolved_source == active,
+        is_active=resolved_source == active
+        or bool(active_source and Path(active_source).resolve(strict=False) == resolved_source),
         is_deployed_source=bool(deployed_source and resolved_source == deployed_source.resolve(strict=False)),
         current_index=load_erp_index(),
         compared_to_path=compared_to_path,
@@ -1108,19 +1167,56 @@ def list_erp_files() -> List[Dict[str, Any]]:
             }
         )
 
+    active_payload, _, remote_missing, active_uri, remote_updated_at = _load_active_erp_snapshot()
+    if active_uri and not remote_missing:
+        active_meta = _extract_catalog_meta(active_payload)
+        files.append(
+            {
+                "path": active_uri,
+                "name": active_uri.rsplit("/", 1)[-1],
+                "size_bytes": int(active_meta.get("source_size_bytes") or 0),
+                "updated_at": remote_updated_at or _stringify(active_meta.get("updated_at")) or "",
+                "is_active": True,
+                "is_deployed_source": False,
+                "source_path": _stringify(active_meta.get("source_path")) or None,
+            }
+        )
+
     files.sort(key=lambda entry: entry["updated_at"], reverse=True)
     return files
 
 
-def _load_existing_erp_payload() -> Dict[str, Any]:
-    source = _resolve_json_path()
-    if not source.is_file():
-        return {}
-
-    payload = _load_json_file(source)
+def _normalize_active_payload(payload: Any) -> Dict[str, Any]:
     if isinstance(payload, dict):
         return dict(payload)
     return {"products": _extract_records(payload)}
+
+
+def _load_active_erp_snapshot() -> tuple[Dict[str, Any], str | None, bool, str | None, str | None]:
+    """Return active payload, remote ETag, remote-missing flag, URI, and update time."""
+    active_uri = storage_uri()
+    if active_uri:
+        remote = load_remote_erp()
+        if remote is not None:
+            return (
+                _normalize_active_payload(_parse_json_bytes(remote.content)),
+                remote.etag,
+                False,
+                active_uri,
+                remote.updated_at,
+            )
+
+    source = _resolve_json_path()
+    if source.is_file():
+        payload = _normalize_active_payload(_load_json_file(source))
+        updated_at = datetime.fromtimestamp(source.stat().st_mtime, tz=timezone.utc).isoformat()
+        return payload, None, bool(active_uri), active_uri, updated_at
+    return {}, None, bool(active_uri), active_uri, None
+
+
+def _load_existing_erp_payload() -> Dict[str, Any]:
+    payload, _, _, _, _ = _load_active_erp_snapshot()
+    return payload
 
 
 def _write_erp_products(
@@ -1130,6 +1226,8 @@ def _write_erp_products(
     imported_at: str | None = None,
     deployment_source: Dict[str, Any] | None = None,
     persist_change_summary: bool = False,
+    expected_remote_etag: str | None = None,
+    expected_remote_missing: bool = False,
 ) -> Dict[str, Any]:
     timestamp = datetime.now(timezone.utc).isoformat()
     stored_payload: Dict[str, Any] = {}
@@ -1176,15 +1274,24 @@ def _write_erp_products(
     stored_payload["products"] = sort_products_by_category(products)
     stored_payload[CATALOG_META_KEY] = catalog_meta
 
-    target = _resolve_json_target_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(stored_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    serialized_payload = json.dumps(stored_payload, ensure_ascii=False, indent=2).encode("utf-8")
+    remote_uri = storage_uri()
+    if remote_uri:
+        write_remote_erp(
+            serialized_payload,
+            expected_etag=expected_remote_etag,
+            expected_missing=expected_remote_missing,
+        )
+        target_label = remote_uri
+    else:
+        target = _resolve_json_target_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_bytes(target, serialized_payload)
+        target_label = str(target)
+    _invalidate_catalog_response_caches()
 
     return {
-        "path": str(target),
+        "path": target_label,
         "products_imported": len(stored_payload["products"]),
         "products_loaded": len(stored_payload["products"]),
         "imported_at": stored_payload["imported_at"],
@@ -1198,17 +1305,19 @@ def _write_erp_products(
 
 
 def list_erp_products() -> Dict[str, Any]:
-    source = _resolve_json_path()
+    payload, _, _, active_uri, remote_updated_at = _load_active_erp_snapshot()
     products = sort_products_by_category(list(load_erp_index().values()))
-    meta = _extract_catalog_meta(_load_existing_erp_payload())
+    meta = _extract_catalog_meta(payload)
+    source = _resolve_json_path()
+    active_path = active_uri or str(source)
+    exists = bool(payload)
+    updated_at = remote_updated_at or _stringify(meta.get("updated_at")) or None
     return {
-        "path": str(source),
-        "exists": source.is_file(),
+        "path": active_path,
+        "exists": exists,
         "products_loaded": len(products),
         "imported_at": _stringify(meta.get("imported_at")) or None,
-        "updated_at": datetime.fromtimestamp(source.stat().st_mtime, tz=timezone.utc).isoformat()
-        if source.is_file()
-        else None,
+        "updated_at": updated_at,
         "source_path": _stringify(meta.get("source_path")) or None,
         "source_name": _stringify(meta.get("source_name")) or None,
         "source_size_bytes": meta.get("source_size_bytes"),
@@ -1232,12 +1341,21 @@ def upsert_erp_product(product: Dict[str, Any], code: str | None = None) -> Dict
     if not normalized:
         raise ValueError("invalid ERP product payload")
 
-    existing_payload = _load_existing_erp_payload()
-    index = load_erp_index()
-    created = normalized_code not in index
-    index[normalized_code] = normalized
+    with _ERP_MUTATION_LOCK:
+        existing_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot()
+        try:
+            index = _build_index(existing_payload)
+        except ValueError:
+            index = {}
+        created = normalized_code not in index
+        index[normalized_code] = normalized
 
-    result = _write_erp_products(list(index.values()), base_payload=existing_payload)
+        result = _write_erp_products(
+            list(index.values()),
+            base_payload=existing_payload,
+            expected_remote_etag=etag,
+            expected_remote_missing=remote_expected_missing,
+        )
     result["code"] = normalized_code
     result["created"] = created
     result["product"] = normalized
@@ -1245,12 +1363,8 @@ def upsert_erp_product(product: Dict[str, Any], code: str | None = None) -> Dict
 
 
 def load_erp_index() -> Dict[str, Dict[str, Any]]:
-    source = _resolve_json_path()
-    if not source.is_file():
-        return {}
-
     try:
-        payload = _load_json_file(source)
+        payload = _load_existing_erp_payload()
     except Exception:
         return {}
 
@@ -1261,17 +1375,16 @@ def load_erp_index() -> Dict[str, Dict[str, Any]]:
 
 
 def get_erp_status() -> Dict[str, Any]:
-    source = _resolve_json_path()
+    payload, _, _, active_uri, remote_updated_at = _load_active_erp_snapshot()
     index = load_erp_index()
-    meta = _extract_catalog_meta(_load_existing_erp_payload())
+    meta = _extract_catalog_meta(payload)
+    source = _resolve_json_path()
     return {
-        "path": str(source),
-        "exists": source.is_file(),
+        "path": active_uri or str(source),
+        "exists": bool(payload),
         "products_loaded": len(index),
         "imported_at": _stringify(meta.get("imported_at")) or None,
-        "updated_at": datetime.fromtimestamp(source.stat().st_mtime, tz=timezone.utc).isoformat()
-        if source.is_file()
-        else None,
+        "updated_at": remote_updated_at or _stringify(meta.get("updated_at")) or None,
         "source_path": _stringify(meta.get("source_path")) or None,
         "source_name": _stringify(meta.get("source_name")) or None,
         "source_size_bytes": meta.get("source_size_bytes"),

@@ -629,6 +629,60 @@ def test_catalog_export_uses_catalog_media_enrichment(monkeypatch):
     assert products[0]['URLFoto'] == 'https://cdn.example/3009_1.jpg'
 
 
+def test_technical_sheet_resolves_missing_photos_from_media_service(monkeypatch):
+    from catalog import exporter
+
+    monkeypatch.setattr(
+        'catalog.services.media_service.get_product_photos_payload',
+        lambda code: {
+            'white_background': f'https://drive.google.com/thumbnail?id={code}-white&sz=w1000',
+            'ambient': f'https://drive.google.com/thumbnail?id={code}-ambient&sz=w1000',
+            'measures': f'https://drive.google.com/thumbnail?id={code}-measures&sz=w1000',
+        },
+    )
+
+    products = exporter._enrich_products_with_export_photos([
+        {'Codigo': '5999', 'Nome': 'Abajur Horus', 'FotoBranco': ''},
+    ])
+
+    assert products[0]['FotoBranco'].endswith('id=5999-white&sz=w1000')
+    assert products[0]['FotoAmbient'].endswith('id=5999-ambient&sz=w1000')
+    assert products[0]['FotoMedidas'].endswith('id=5999-measures&sz=w1000')
+    assert products[0]['URLFoto'].endswith('id=5999-white&sz=w1000')
+
+
+def test_export_resolves_internal_google_drive_photo_proxy(monkeypatch):
+    from catalog import exporter
+
+    monkeypatch.setattr(
+        'catalog.google_drive.fetch_google_drive_image',
+        lambda file_id, size='detail': (b'fake-image', 'image/jpeg'),
+    )
+
+    payload, extension = exporter._resolve_photo_bytes(
+        '/catalog/media/google-drive/google-file-123?size=detail'
+    )
+
+    assert payload == b'fake-image'
+    assert extension == '.jpg'
+
+
+def test_export_resolves_google_drive_thumbnail_redirect(monkeypatch):
+    from catalog import exporter
+
+    monkeypatch.setattr(
+        'catalog.google_drive.fetch_google_drive_image',
+        lambda file_id, size='detail': (b'fake-image', 'image/jpeg'),
+    )
+
+    payload, extension = exporter._resolve_photo_bytes(
+        'https://drive.google.com/thumbnail?id=google-file-123&sz=w1000'
+    )
+
+    assert payload == b'fake-image'
+    assert extension == '.jpg'
+
+
 def test_technical_sheet_deduplicates_equivalent_spec_labels():
     from catalog import exporter
 

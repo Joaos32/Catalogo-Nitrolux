@@ -4,7 +4,7 @@ O deploy de produção usa uma única origem HTTPS:
 
 - CloudFront publica a aplicação;
 - o frontend React/Vite fica em um bucket S3 privado;
-- `/catalog/*` e `/auth/*` são encaminhados pelo CloudFront ao API Gateway;
+- `/catalog/*`, `/auth/*` e `/health*` são encaminhados pelo CloudFront ao API Gateway;
 - a API FastAPI roda em Lambda por meio do Mangum;
 - as fotos ficam em outro bucket S3 privado e são entregues por URLs temporárias assinadas.
 
@@ -96,13 +96,13 @@ O envio de fotos não usa `--delete`, evitando remoção acidental de objetos ex
 
 ## Configuração de usuários
 
-Na Lambda, alterações gravadas somente no sistema de arquivos não persistem entre execuções. Para o primeiro deploy, forneça os representantes por variável:
+Na Lambda, alterações gravadas somente no sistema de arquivos não persistem entre execuções. O template configura o cadastro gerenciado de representantes e o snapshot ERP ativo em um bucket S3 privado, versionado e criptografado. Para o primeiro deploy, forneça ao menos um usuário inicial por variável:
 
 ```powershell
 $env:CATALOG_REPRESENTATIVE_USERS_JSON = '[{"email":"vendas@empresa.com","name":"Vendas","password_hash":"HASH_GERADO"}]'
 ```
 
-O catálogo fica público quando nenhuma fonte de representantes é configurada. O painel pode ler as credenciais administrativas informadas no deploy, mas cadastros mutáveis e importações ERP precisam ser tratados como dados de origem e republicados; a migração dessas gravações para armazenamento persistente deve ser feita antes de usar o painel como sistema transacional.
+O deploy automatizado exige essa configuração e habilita `CATALOG_REQUIRE_REPRESENTATIVE_LOGIN=true`. Após publicar, confira `/health/ready`: ele verifica o catálogo empacotado, a chave de sessão, a existência de representantes e a conectividade do armazenamento ERP. A tabela DynamoDB compartilhada aplica o limite de tentativas de login entre instâncias Lambda. Arquivos enviados para prévia continuam temporários; somente a importação ativa é persistida no bucket de estado.
 
 ## Deploy manual
 
@@ -131,10 +131,10 @@ Abra o output `ApplicationUrl`, não o endpoint direto do API Gateway.
 
 ## CORS e domínio próprio
 
-O frontend usa `VITE_API_BASES=/`, portanto as chamadas normais são same-origin e não dependem de CORS. O parâmetro `CorsAllowOrigins` existe apenas para clientes hospedados em outro domínio.
+O frontend usa `VITE_API_BASES=/`, portanto as chamadas normais são same-origin e não dependem de CORS. O parâmetro `CorsAllowOrigins` fica vazio por padrão; configure-o somente para clientes hospedados em outro domínio.
 
 Para um domínio próprio, adicione ao template um certificado ACM na região `us-east-1` e configure `Aliases` e `ViewerCertificate` na distribuição. Depois use esse domínio em `CorsAllowOrigins`.
 
 ## Custos e retenção
 
-O template usa recursos cobrados por uso: Lambda, API Gateway, S3 e CloudFront. Os dois buckets possuem `DeletionPolicy: Retain`; remover a stack não apaga automaticamente builds nem fotos.
+O template usa recursos cobrados por uso: Lambda, API Gateway, S3, DynamoDB e CloudFront. O bucket privado de estado guarda o catálogo ERP ativo e representantes gerenciados; mantém criptografia e versionamento. O DynamoDB armazena contadores temporários de autenticação com TTL. Os buckets possuem `DeletionPolicy: Retain`; remover a stack não apaga automaticamente builds, fotos nem estado.

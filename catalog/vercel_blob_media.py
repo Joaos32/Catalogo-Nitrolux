@@ -45,7 +45,7 @@ def _asset_url(pathname: str) -> str:
     return f"/catalog/blob/asset?blobPath={quote(pathname, safe='')}"
 
 
-@cached
+@cached(stale_if_error=True)
 def _list_media_items() -> List[Dict[str, Any]]:
     if not is_configured():
         return []

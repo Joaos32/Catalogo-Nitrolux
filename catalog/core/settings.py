@@ -12,11 +12,9 @@ _GENERATED_SESSION_SECRET = secrets.token_urlsafe(32)
 
 
 def _parse_csv_env(value: str | None, default: list[str]) -> list[str]:
-    if not value:
+    if value is None:
         return default
-    parsed = [item.strip() for item in value.split(",")]
-    values = [item for item in parsed if item]
-    return values or default
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _parse_bool_env(value: str | None, default: bool) -> bool:

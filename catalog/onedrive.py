@@ -41,7 +41,7 @@ def categorize_photos(items: list, code: str = None) -> dict:
     return _graph_catalog.categorize_photos(items, code=code)
 
 
-@cached
+@cached(stale_if_error=True)
 def find_images_for_code(share_url: str, code: str, max_depth: int = 5) -> List[Dict]:
     return _graph_catalog.find_images_for_code(
         share_url,
@@ -81,7 +81,7 @@ def _scan_local_photo_index(root: str) -> Dict[str, Dict]:
     )
 
 
-@cached
+@cached(stale_if_error=True)
 def build_local_photo_index(root_path: str | None = None) -> Dict[str, Dict]:
     return _local_catalog.build_local_photo_index(
         root_path,

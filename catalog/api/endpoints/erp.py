@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..errors import internal_server_error_response
 from ..security import require_erp_admin
+from ...erp_storage import ERPWriteConflictError
 
 
 router = APIRouter(dependencies=[Depends(require_erp_admin)])
@@ -22,6 +23,8 @@ async def import_erp_products(payload: dict | list = Body(...)):
         from ...erp_catalog import import_erp_payload
 
         return import_erp_payload(payload)
+    except ERPWriteConflictError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:
@@ -56,6 +59,8 @@ async def upload_erp_file(request: Request, filename: str | None = None):
         )
 
         return receive_erp_file(filename=selected_name, content=body)
+    except ERPWriteConflictError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:
@@ -108,6 +113,8 @@ async def import_erp_file_from_backend(payload: dict = Body(...)):
         from ...erp_catalog import import_erp_file
 
         return import_erp_file(file_path)
+    except ERPWriteConflictError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:
@@ -166,6 +173,8 @@ async def save_backend_erp_product(codigo: str, payload: dict = Body(...)):
         from ...erp_catalog import upsert_erp_product
 
         return upsert_erp_product(payload, code=codigo)
+    except ERPWriteConflictError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:

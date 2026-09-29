@@ -80,12 +80,46 @@ export default function ProductDetail({
         </div>
 
         <aside className="detail-meta">
-          <h2>{item.name || "Produto"}</h2>
-          <div className="detail-tags">
-            <span className="detail-tag">{item.brandLabel}</span>
-            <span className="detail-tag">Código: {item.code}</span>
-            <span className="detail-tag">{item.category || "Sem categoria"}</span>
+          <header className="detail-product-heading">
+            <span className="detail-eyebrow">Informações do produto</span>
+            <h2>{item.name || "Produto"}</h2>
+            <div className="detail-tags" aria-label="Identificação do produto">
+              <span className="detail-tag detail-tag-brand">{item.brandLabel}</span>
+              <span className="detail-tag detail-tag-code">
+                <span>Código</span>
+                <strong>{item.code}</strong>
+              </span>
+              <span className="detail-tag detail-tag-category">{item.category || "Sem categoria"}</span>
+            </div>
+          </header>
+
+          <div className="detail-information">
+            <section className="detail-information-block">
+              <h3>Descrição</h3>
+              <p>{item.description || "Descrição indisponível para este produto."}</p>
+            </section>
+            <section className="detail-information-block detail-information-technical">
+              <h3>Especificações técnicas</h3>
+              <p>{item.specs || "Sem especificações técnicas cadastradas."}</p>
+            </section>
+            {item.attributes.length > 0 && (
+              <section className="detail-attributes-section" aria-label="Características do produto">
+                <div className="detail-section-heading">
+                  <h3>Características</h3>
+                  <span>{item.attributes.length} {item.attributes.length === 1 ? "item" : "itens"}</span>
+                </div>
+                <dl className="detail-attributes">
+                  {item.attributes.map((attribute) => (
+                    <div key={`${attribute.label}-${attribute.value}`} className="detail-attribute-item">
+                      <dt>{getAttributeDisplayLabel(attribute.label)}</dt>
+                      <dd>{attribute.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
           </div>
+
           <ExportActions
             title="Baixar este produto"
             note="Baixe a ficha técnica em PDF ou exporte os dados e fotos do produto."
@@ -93,18 +127,6 @@ export default function ProductDetail({
             compact
             includeTechnicalSheet
           />
-          <p>{item.description || "Descrição indisponível para este produto."}</p>
-          <p>{item.specs || "Sem especificações técnicas cadastradas."}</p>
-          {item.attributes.length > 0 && (
-            <dl className="detail-attributes">
-              {item.attributes.map((attribute) => (
-                <div key={`${attribute.label}-${attribute.value}`} className="detail-attribute-item">
-                  <dt>{getAttributeDisplayLabel(attribute.label)}</dt>
-                  <dd>{attribute.value}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
         </aside>
       </div>
 

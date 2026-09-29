@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from io import BytesIO, StringIO
 import ipaddress
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ import requests
 from . import onedrive
 
 
+logger = logging.getLogger(__name__)
 SUPPORTED_EXPORT_FORMATS = {"csv", "json", "xlsx", "xls", "pdf", "ficha", "zip"}
 PREFERRED_COLUMNS = (
     "Codigo",
@@ -116,6 +118,64 @@ def _load_products() -> List[Dict[str, Any]]:
     from .services.catalog_service import list_catalog_products
 
     return list_catalog_products()
+
+
+def _enrich_products_with_export_photos(
+    products: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Resolve photos by product code before rendering a technical sheet.
+
+    The catalog page can obtain photos from providers such as Google Drive at
+    request time, while the product snapshot may intentionally keep its photo
+    fields empty in serverless deployments. Technical sheets must use the same
+    media fallback chain so they do not render a false ``SEM FOTO`` card.
+    """
+    from .services.media_service import get_product_photos_payload
+
+    field_map = {
+        "white_background": "FotoBranco",
+        "ambient": "FotoAmbient",
+        "measures": "FotoMedidas",
+    }
+    enriched: List[Dict[str, Any]] = []
+
+    for product in products:
+        merged = dict(product)
+        code = _stringify(product.get("Codigo"))
+        if not code:
+            enriched.append(merged)
+            continue
+
+        try:
+            resolved = get_product_photos_payload(code=code)
+        except Exception as exc:
+            logger.warning("Could not resolve export photos for product %s: %s", code, exc)
+            enriched.append(merged)
+            continue
+
+        if not isinstance(resolved, dict):
+            enriched.append(merged)
+            continue
+
+        for source_field, product_field in field_map.items():
+            url = _stringify(resolved.get(source_field))
+            if url:
+                merged[product_field] = url
+
+        cover = next(
+            (
+                _stringify(resolved.get(source_field))
+                for source_field in ("white_background", "ambient", "measures")
+                if _stringify(resolved.get(source_field))
+            ),
+            "",
+        )
+        if cover:
+            merged["URLFoto"] = cover
+
+        enriched.append(merged)
+
+    return enriched
 
 
 def _max_remote_image_bytes() -> int:
@@ -798,6 +858,51 @@ def _resolve_photo_bytes(url: str) -> tuple[bytes | None, str]:
         except OSError:
             return None, local_path.suffix.lower()
 
+    if parsed.path.startswith("/catalog/media/google-drive/"):
+        file_id = parsed.path.rsplit("/", 1)[-1].strip()
+        if not file_id:
+            return None, ""
+        try:
+            from .google_drive import fetch_google_drive_image
+
+            payload, media_type = fetch_google_drive_image(file_id, size="detail")
+            return payload, mimetypes.guess_extension(media_type) or ".jpg"
+        except Exception:
+            return None, ""
+
+    # As URLs publicadas pelo Google Drive normalmente apontam para
+    # drive.google.com/thumbnail e respondem com um redirecionamento para
+    # googleusercontent.com. O download remoto genérico não segue redirects
+    # deliberadamente; resolver pelo ID mantém essa proteção e ainda permite
+    # incorporar a imagem na ficha técnica.
+    if parsed.hostname and parsed.hostname.lower() in {"drive.google.com", "www.drive.google.com"}:
+        if parsed.path in {"/thumbnail", "/uc"}:
+            file_id = parse_qs(parsed.query).get("id", [""])[0].strip()
+            if file_id:
+                try:
+                    from .google_drive import fetch_google_drive_image
+
+                    payload, media_type = fetch_google_drive_image(file_id, size="detail")
+                    return payload, mimetypes.guess_extension(media_type) or ".jpg"
+                except Exception:
+                    return None, ""
+
+    if parsed.path.endswith("/catalog/blob/asset"):
+        blob_path = parse_qs(parsed.query).get("blobPath", [""])[0]
+        if not blob_path:
+            return None, ""
+        try:
+            from .vercel_blob_media import get_asset
+
+            asset = get_asset(unquote(blob_path))
+            if asset is None:
+                return None, ""
+            content_type = str(getattr(asset, "content_type", "") or "")
+            extension = Path(unquote(blob_path)).suffix.lower()
+            return asset.content, extension or mimetypes.guess_extension(content_type) or ".jpg"
+        except Exception:
+            return None, ""
+
     if parsed.scheme not in {"http", "https"}:
         return None, ""
 
@@ -1270,6 +1375,9 @@ def build_catalog_export(
         raise ValueError("no products available for the selected export")
     if normalized_format == "ficha" and not code:
         raise ValueError("technical sheet export requires a product code")
+
+    if normalized_format in {"pdf", "ficha"} and code:
+        products = _enrich_products_with_export_photos(products)
 
     if normalized_format == "ficha" and code:
         base_name = f"ficha-tecnica-{_slugify(code, fallback='produto')}-alta-resolucao-v2"

@@ -18,7 +18,7 @@ Parameters:
     Default: "produtos/"
   CorsAllowOrigins:
     Type: String
-    Default: "https://catalog.invalid"
+    Default: ""
     Description: Optional comma-separated external origins. CloudFront uses same-origin requests and does not require CORS.
   CatalogSessionSecret:
     Type: String
@@ -35,7 +35,7 @@ Parameters:
   RepresentativeUsersJson:
     Type: String
     NoEcho: true
-    Default: ""
+    MinLength: 3
   RepresentativeJwtSecret:
     Type: String
     NoEcho: true
@@ -66,6 +66,7 @@ Globals:
         CATALOG_SKIP_DOTENV: "true"
         CATALOG_ENABLE_API_DOCS: "false"
         CATALOG_ALLOW_OPEN_ADMIN: "false"
+        CATALOG_REQUIRE_REPRESENTATIVE_LOGIN: "true"
         CATALOG_CORS_ALLOW_ORIGINS: !Ref CorsAllowOrigins
         CATALOG_CORS_ALLOW_CREDENTIALS: "true"
         CATALOG_SESSION_SECRET: !Ref CatalogSessionSecret
@@ -74,6 +75,12 @@ Globals:
         CATALOG_ADMIN_LOGIN_EMAIL: !Ref AdminLoginEmail
         CATALOG_ADMIN_LOGIN_PASSWORD: !Ref AdminLoginPassword
         CATALOG_REPRESENTATIVE_USERS_JSON: !Ref RepresentativeUsersJson
+        CATALOG_REPRESENTATIVE_S3_BUCKET: !Ref CatalogStateBucket
+        CATALOG_REPRESENTATIVE_S3_KEY: "representatives/representative_users.json"
+        CATALOG_REPRESENTATIVE_S3_REGION: !Ref AWS::Region
+        CATALOG_ERP_S3_BUCKET: !Ref CatalogStateBucket
+        CATALOG_ERP_S3_KEY: "catalog/erp_products.json"
+        CATALOG_AUTH_RATE_LIMIT_TABLE: !Ref CatalogAuthRateLimitTable
         CATALOG_GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
         CATALOG_GOOGLE_DRIVE_API_KEY: !Ref GoogleDriveApiKey
         CATALOG_GOOGLE_DRIVE_RECURSIVE: "true"
@@ -97,6 +104,19 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - S3ReadPolicy:
             BucketName: !Ref MediaBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "${CatalogStateBucket.Arn}/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !GetAtt CatalogAuthRateLimitTable.Arn
       Events:
         Root:
           Type: HttpApi
@@ -131,6 +151,40 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+
+  CatalogStateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  CatalogAuthRateLimitTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: bucket_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: bucket_key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
 
   FrontendBucket:
     Type: AWS::S3::Bucket
@@ -270,6 +324,19 @@ Resources:
             - EventType: viewer-request
               FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
         CacheBehaviors:
+          - PathPattern: "health*"
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref ApiCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+            Compress: true
           - PathPattern: "catalog/*"
             TargetOriginId: ApiOrigin
             ViewerProtocolPolicy: redirect-to-https
@@ -343,3 +410,9 @@ Outputs:
   MediaPrefix:
     Description: Prefix used by the API to list product images
     Value: !Ref MediaPrefix
+  CatalogStateBucketName:
+    Description: Private versioned bucket for active ERP data and representative accounts
+    Value: !Ref CatalogStateBucket
+  CatalogAuthRateLimitTableName:
+    Description: Shared authentication attempt counters across Lambda instances
+    Value: !Ref CatalogAuthRateLimitTable

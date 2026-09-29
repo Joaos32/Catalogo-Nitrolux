@@ -21,6 +21,7 @@ export default function ProductCard({
 }: ProductCardProps): JSX.Element {
   const previewImage =
     optimizeCatalogImageUrl(getPrimaryProductImage(photos, item.cover), "card") || CARD_FALLBACK_IMAGE;
+  const description = item.description.replace(/\s+\+\s+/g, " · ");
 
   return (
     <article className="product-card" style={{ "--stagger": `${Math.min(index * 70, 700)}ms` } as CSSProperties}>
@@ -40,15 +41,17 @@ export default function ProductCard({
             height="700"
             onError={(event) => setFallbackImage(event, CARD_FALLBACK_IMAGE)}
           />
-          <div className="media-overlay"></div>
+          <div className="media-overlay" aria-hidden="true"></div>
           <span className="chip chip-code">#{item.code}</span>
-          <span className="chip chip-category">{item.category}</span>
+          <span className="chip chip-category">{item.category || "Sem categoria"}</span>
         </div>
 
         <div className="card-body">
-          <h3>{item.name || "Produto"}</h3>
-          <p className="description">{item.description || "Descrição indisponível para este produto."}</p>
-          <span className="expand-label">Abrir galeria completa</span>
+          <h3 title={item.name || "Produto"}>{item.name || "Produto"}</h3>
+          <p className="description">
+            {description || "Descrição indisponível para este produto."}
+          </p>
+          <span className="expand-label">Ver produto e fotos</span>
         </div>
       </button>
 

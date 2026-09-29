@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, Request
@@ -20,6 +21,8 @@ router = APIRouter(dependencies=[Depends(require_representative_access)])
 logger = logging.getLogger(__name__)
 EXPORT_CACHE_CONTROL = "private, no-cache"
 _export_build_lock = threading.Lock()
+_EXPORT_CACHE_TTL_SECONDS = 10
+_export_cache_refreshed_at = 0.0
 
 
 @lru_cache(maxsize=8)
@@ -49,6 +52,7 @@ def _build_export(
     code: str,
     brand: str,
 ) -> tuple[bytes, str, str]:
+    global _export_cache_refreshed_at
     from ...exporter import build_catalog_export
 
     normalized_format = format_name.lower().strip()
@@ -60,6 +64,10 @@ def _build_export(
         # Prevent duplicate CPU-heavy generation inside a concurrent Fluid
         # Compute instance. The bounded cache avoids unrestrained memory use.
         with _export_build_lock:
+            now = time.monotonic()
+            if now - _export_cache_refreshed_at >= _EXPORT_CACHE_TTL_SECONDS:
+                _cached_export.cache_clear()
+                _export_cache_refreshed_at = now
             return _cached_export(normalized_format, query, category, code, brand)
     return build_catalog_export(
         format_name=normalized_format,

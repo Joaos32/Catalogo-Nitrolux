@@ -36,11 +36,11 @@ explícito esse fluxo.
 
 ## Persistência de representantes
 
-O cadastro de representantes usa um Vercel Blob privado quando `BLOB_READ_WRITE_TOKEN` está configurado. Sem essa variável, o projeto mantém o arquivo JSON local para desenvolvimento.
+O cadastro de representantes usa um Vercel Blob privado quando `BLOB_READ_WRITE_TOKEN` está configurado. O mesmo Blob guarda o snapshot ERP ativo em `catalogo/erp_products.json` com `CATALOG_ERP_BLOB_ENABLED=true`. Sem o token, o projeto mantém arquivos locais para desenvolvimento; no runtime Vercel, a prontidão fica em `503` até o Blob estar acessível.
 
 Crie e conecte um Blob privado ao projeto. A Vercel injeta `BLOB_READ_WRITE_TOKEN` automaticamente nos ambientes selecionados. O objeto é salvo como `catalogo/representative_users.json`; o caminho pode ser alterado por `CATALOG_REPRESENTATIVE_BLOB_PATH`.
 
-As importações ERP ainda usam JSON local e não devem ser tratadas como persistência durável na Vercel.
+Arquivos temporários enviados para prévia continuam no diretório da função e não são persistentes. O catálogo ERP ativado é armazenado no Blob.
 
 ## Variáveis obrigatórias
 
@@ -57,9 +57,31 @@ CATALOG_SESSION_SECRET=<segredo aleatorio com 32 ou mais caracteres>
 CATALOG_REPRESENTATIVE_JWT_SECRET=<outro segredo aleatorio>
 CATALOG_ADMIN_LOGIN_EMAIL=<email administrativo>
 CATALOG_ADMIN_LOGIN_PASSWORD=<senha forte>
+CATALOG_INTEGRATION_API_KEY=<chave aleatoria exclusiva para integracoes>
 ```
 
 Nunca grave segredos no `vercel.json` ou no Git.
+
+As tentativas de login têm limite em memória por instância no Vercel. Para
+compartilhar esse limite entre instâncias, configure no WAF da plataforma uma
+regra de taxa para `/auth/representative/login`,
+`/auth/representative/reset-password` e `/auth/admin/login`.
+
+## API de integracao de produtos
+
+Configure `CATALOG_INTEGRATION_API_KEY` como segredo no ambiente da aplicacao.
+Consumidores servidor a servidor enviam a chave no cabecalho
+`X-Catalog-Api-Key`:
+
+- `GET /catalog/integration/products` exporta o cadastro consolidado, incluindo
+  os campos `URLFoto`, `FotoBranco`, `FotoAmbient` e `FotoMedidas`;
+- `GET /catalog/integration/pienza/products` entrega somente os produtos Pienza,
+  com os campos `codigo` e `descricao`;
+- `GET /catalog/integration/categories` lista as categorias e quantidades.
+
+As rotas sao somente de leitura. O endpoint Pienza filtra pelo codigo de marca
+`CODMARCA=2` e nao inclui fotos nem outros campos. O endpoint geral continua
+disponivel para consumidores que precisem do cadastro completo.
 
 ## Fotos gratuitas no Google Drive
 

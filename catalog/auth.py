@@ -5,7 +5,9 @@ import json
 import os
 import logging
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import List
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
@@ -59,7 +61,11 @@ REPRESENTATIVE_ROLE = "representative"
 REPRESENTATIVE_COOKIE_NAME = "catalog_rep_session"
 AUTH_RATE_LIMIT_WINDOW_SECONDS = 300
 AUTH_RATE_LIMIT_MAX_ATTEMPTS = 10
-_AUTH_FAILURES: dict[str, list[float]] = {}
+AUTH_RATE_LIMIT_MAX_KEYS = 4096
+AUTH_RATE_LIMIT_GLOBAL_PRUNE_SECONDS = 30
+_AUTH_FAILURES: OrderedDict[str, list[float]] = OrderedDict()
+_AUTH_FAILURES_LOCK = threading.Lock()
+_AUTH_FAILURES_LAST_PRUNE = 0.0
 
 
 def _resolve_cache_file() -> str:
@@ -108,44 +114,169 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 
 def _client_rate_limit_ip(request: Request) -> str:
-    forwarded_for = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if forwarded_for:
-        return forwarded_for
+    if str(os.getenv("VERCEL") or "").strip().lower() in {"1", "true", "yes"}:
+        try:
+            from vercel.functions import ip_address
+
+            platform_ip = str(ip_address(request) or "").strip()
+            if platform_ip:
+                return platform_ip
+        except Exception:
+            logger.debug("Vercel request IP helper is unavailable; using the ASGI client address")
+
+    try:
+        trusted_proxy_hops = max(0, int(os.getenv("CATALOG_AUTH_TRUSTED_PROXY_HOPS", "0")))
+    except ValueError:
+        trusted_proxy_hops = 0
+    forwarded_for = [
+        item.strip()
+        for item in str(request.headers.get("x-forwarded-for") or "").split(",")
+        if item.strip()
+    ]
+    if trusted_proxy_hops and len(forwarded_for) > trusted_proxy_hops:
+        return forwarded_for[-trusted_proxy_hops - 1]
     return request.client.host if request.client else "unknown"
 
 
-def _rate_limit_key(request: Request, scope: str, identity: str) -> str:
+def _rate_limit_keys(request: Request, scope: str, identity: str) -> tuple[str, str]:
     normalized_identity = str(identity or "").strip().lower() or "unknown"
-    return f"{scope}:{_client_rate_limit_ip(request)}:{normalized_identity}"
+    client_ip = _client_rate_limit_ip(request)
+    return (
+        f"{scope}:ip:{client_ip}",
+        f"{scope}:identity:{normalized_identity[:320]}",
+    )
+
+
+def _shared_rate_limit_bucket_key(key: str, bucket: int) -> str:
+    message = f"{key}:{bucket}".encode("utf-8")
+    return hmac.new(
+        _representative_jwt_secret().encode("utf-8"),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def _prune_auth_failures(key: str, now: float | None = None) -> list[float]:
+    global _AUTH_FAILURES_LAST_PRUNE
     timestamp = now if now is not None else time.time()
     cutoff = timestamp - AUTH_RATE_LIMIT_WINDOW_SECONDS
-    attempts = [item for item in _AUTH_FAILURES.get(key, []) if item >= cutoff]
-    if attempts:
-        _AUTH_FAILURES[key] = attempts
-    else:
-        _AUTH_FAILURES.pop(key, None)
-    return attempts
+    with _AUTH_FAILURES_LOCK:
+        if timestamp - _AUTH_FAILURES_LAST_PRUNE >= AUTH_RATE_LIMIT_GLOBAL_PRUNE_SECONDS:
+            for stored_key, stored_attempts in list(_AUTH_FAILURES.items()):
+                active_attempts = [item for item in stored_attempts if item >= cutoff]
+                if active_attempts:
+                    _AUTH_FAILURES[stored_key] = active_attempts
+                else:
+                    _AUTH_FAILURES.pop(stored_key, None)
+            _AUTH_FAILURES_LAST_PRUNE = timestamp
+
+        attempts = [item for item in _AUTH_FAILURES.get(key, []) if item >= cutoff]
+        if attempts:
+            _AUTH_FAILURES[key] = attempts
+            _AUTH_FAILURES.move_to_end(key)
+        else:
+            _AUTH_FAILURES.pop(key, None)
+        return attempts
 
 
-def _check_auth_rate_limit(request: Request, scope: str, identity: str) -> str:
-    key = _rate_limit_key(request, scope, identity)
-    attempts = _prune_auth_failures(key)
-    if len(attempts) >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
+def _check_auth_rate_limit(request: Request, scope: str, identity: str) -> tuple[str, str]:
+    keys = _rate_limit_keys(request, scope, identity)
+    table_name = str(os.getenv("CATALOG_AUTH_RATE_LIMIT_TABLE") or "").strip()
+    if table_name:
+        window = AUTH_RATE_LIMIT_WINDOW_SECONDS
+        bucket = int(time.time()) // window
+        try:
+            import boto3
+
+            client = boto3.client("dynamodb")
+            for key in keys:
+                result = client.get_item(
+                    TableName=table_name,
+                    Key={"bucket_key": {"S": _shared_rate_limit_bucket_key(key, bucket)}},
+                    ConsistentRead=True,
+                )
+                attempts = int(result.get("Item", {}).get("attempts", {}).get("N", "0"))
+                if attempts >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
+                    raise HTTPException(status_code=429, detail="Too many authentication attempts")
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            logger.exception("Shared authentication rate-limit storage is unavailable")
+            raise HTTPException(status_code=503, detail="Authentication is temporarily unavailable") from exc
+        return keys
+
+    if any(len(_prune_auth_failures(key)) >= AUTH_RATE_LIMIT_MAX_ATTEMPTS for key in keys):
         raise HTTPException(status_code=429, detail="Too many authentication attempts")
-    return key
+    return keys
 
 
-def _record_auth_failure(key: str) -> None:
-    attempts = _prune_auth_failures(key)
-    attempts.append(time.time())
-    _AUTH_FAILURES[key] = attempts
+def _record_auth_failure(keys: tuple[str, ...]) -> None:
+    now = time.time()
+    table_name = str(os.getenv("CATALOG_AUTH_RATE_LIMIT_TABLE") or "").strip()
+    if table_name:
+        window = AUTH_RATE_LIMIT_WINDOW_SECONDS
+        bucket = int(now) // window
+        try:
+            import boto3
+
+            client = boto3.client("dynamodb")
+            for key in keys:
+                client.update_item(
+                    TableName=table_name,
+                    Key={"bucket_key": {"S": _shared_rate_limit_bucket_key(key, bucket)}},
+                    UpdateExpression="SET expires_at = :expires ADD attempts :one",
+                    ConditionExpression="attribute_not_exists(attempts) OR attempts < :max",
+                    ExpressionAttributeValues={
+                        ":expires": {"N": str((bucket + 2) * window)},
+                        ":one": {"N": "1"},
+                        ":max": {"N": str(AUTH_RATE_LIMIT_MAX_ATTEMPTS)},
+                    },
+                )
+        except Exception as exc:
+            error_response = getattr(exc, "response", {})
+            error_code = str(error_response.get("Error", {}).get("Code") or "")
+            if error_code == "ConditionalCheckFailedException":
+                raise HTTPException(status_code=429, detail="Too many authentication attempts") from exc
+            logger.exception("Unable to record an authentication failure")
+            raise HTTPException(status_code=503, detail="Authentication is temporarily unavailable") from exc
+        return
+
+    cutoff = now - AUTH_RATE_LIMIT_WINDOW_SECONDS
+    with _AUTH_FAILURES_LOCK:
+        for key in keys:
+            attempts = [
+                item
+                for item in _AUTH_FAILURES.get(key, [])
+                if item >= cutoff
+            ]
+            if len(attempts) >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
+                raise HTTPException(status_code=429, detail="Too many authentication attempts")
+            attempts.append(now)
+            if key not in _AUTH_FAILURES and len(_AUTH_FAILURES) >= AUTH_RATE_LIMIT_MAX_KEYS:
+                _AUTH_FAILURES.popitem(last=False)
+            _AUTH_FAILURES[key] = attempts
+            _AUTH_FAILURES.move_to_end(key)
 
 
-def _clear_auth_failures(key: str) -> None:
-    _AUTH_FAILURES.pop(key, None)
+def _clear_auth_failures(keys: tuple[str, ...]) -> None:
+    table_name = str(os.getenv("CATALOG_AUTH_RATE_LIMIT_TABLE") or "").strip()
+    if table_name:
+        bucket = int(time.time()) // AUTH_RATE_LIMIT_WINDOW_SECONDS
+        try:
+            import boto3
+
+            client = boto3.client("dynamodb")
+            for key in keys:
+                client.delete_item(
+                    TableName=table_name,
+                    Key={"bucket_key": {"S": _shared_rate_limit_bucket_key(key, bucket)}},
+                )
+        except Exception:
+            logger.warning("Unable to clear an authentication rate-limit counter", exc_info=True)
+        return
+    with _AUTH_FAILURES_LOCK:
+        for key in keys:
+            _AUTH_FAILURES.pop(key, None)
 
 
 def _admin_login_capabilities() -> dict[str, bool]:
@@ -284,6 +415,9 @@ def _build_representative_token(user: dict[str, str]) -> tuple[str, dict[str, ob
         "email": user["email"],
         "name": user["name"],
         "role": REPRESENTATIVE_ROLE,
+        "credential_version": str(
+            user.get("_credential_version") or _representative_credential_version(user)
+        ),
         "iat": now,
         "nbf": now,
         "exp": now + expires_in,
@@ -318,6 +452,8 @@ def _decode_representative_token(token: str) -> dict[str, object]:
         raise ValueError("invalid token claims")
     if payload.get("role") != REPRESENTATIVE_ROLE:
         raise ValueError("invalid token role")
+    if not isinstance(payload.get("credential_version"), str):
+        raise ValueError("missing representative credential version")
 
     now = int(time.time())
     try:
@@ -360,16 +496,54 @@ def get_representative_claims(
     *,
     raise_on_invalid: bool = False,
 ) -> dict[str, object] | None:
+    cache_key = "_catalog_representative_claims_validation"
+    cached_validation = getattr(request.state, cache_key, None)
+    if cached_validation is not None:
+        claims, validation_error = cached_validation
+        if validation_error is not None and raise_on_invalid:
+            raise ValueError(str(validation_error)) from validation_error
+        return claims
+
     provided_token = _extract_bearer_token(authorization) or request.cookies.get(REPRESENTATIVE_COOKIE_NAME)
     if not provided_token:
+        setattr(request.state, cache_key, (None, None))
         return None
 
     try:
-        return _decode_representative_token(provided_token)
-    except ValueError:
+        claims = _decode_representative_token(provided_token)
+        if not _representative_credentials_are_current(claims):
+            raise ValueError("representative credentials changed or account is inactive")
+        setattr(request.state, cache_key, (claims, None))
+        return claims
+    except Exception as exc:
+        validation_error = exc if isinstance(exc, ValueError) else ValueError("unable to validate representative session")
+        setattr(request.state, cache_key, (None, validation_error))
         if raise_on_invalid:
-            raise
+            raise ValueError(str(validation_error)) from exc
         return None
+
+
+def _representative_credential_version(user: dict[str, object]) -> str:
+    email = str(user.get("email") or user.get("sub") or "").strip().lower()
+    credential = str(user.get("password_hash") or user.get("password") or "")
+    if not email or not credential:
+        return ""
+    message = f"{email}\0{credential}".encode("utf-8")
+    digest = hmac.new(_representative_jwt_secret().encode("utf-8"), message, hashlib.sha256).digest()
+    return _urlsafe_b64encode(digest)
+
+
+def _representative_credentials_are_current(claims: dict[str, object]) -> bool:
+    email = str(claims.get("email") or claims.get("sub") or "").strip().lower()
+    provided_version = str(claims.get("credential_version") or "")
+    if not email or not provided_version:
+        return False
+    users = list_representative_login_users()
+    current_user = next((user for user in users if user["email"] == email), None)
+    if current_user is None:
+        return False
+    current_version = _representative_credential_version(current_user)
+    return bool(current_version) and secrets.compare_digest(provided_version, current_version)
 
 
 def _representative_status_payload(claims: dict[str, object] | None) -> dict[str, object]:
@@ -478,10 +652,6 @@ def representative_session_status(
 
 @auth_router.post("/auth/representative/login")
 def representative_login(request: Request, payload: dict = Body(...)):
-    users = _parse_representative_users()
-    if not users:
-        raise HTTPException(status_code=503, detail="Representative login not configured")
-
     provided_email = str(payload.get("email") or payload.get("login") or "").strip().lower()
     provided_password = str(payload.get("password") or "").strip()
 
@@ -490,12 +660,16 @@ def representative_login(request: Request, payload: dict = Body(...)):
     if not provided_password:
         raise HTTPException(status_code=400, detail="Missing password")
 
-    rate_limit_key = _check_auth_rate_limit(request, "representative-login", provided_email)
+    rate_limit_keys = _check_auth_rate_limit(request, "representative-login", provided_email)
+    users = _parse_representative_users()
+    if not users:
+        raise HTTPException(status_code=503, detail="Representative login not configured")
+
     selected_user = next((user for user in users if secrets.compare_digest(user["email"], provided_email)), None)
     if not selected_user or not verify_representative_password(selected_user, provided_password):
-        _record_auth_failure(rate_limit_key)
+        _record_auth_failure(rate_limit_keys)
         raise HTTPException(status_code=403, detail="Invalid representative credentials")
-    _clear_auth_failures(rate_limit_key)
+    _clear_auth_failures(rate_limit_keys)
 
     token, claims = _build_representative_token(selected_user)
     response_payload = _representative_status_payload(claims)
@@ -516,17 +690,17 @@ def representative_reset_password(request: Request, payload: dict = Body(...)):
     provided_email = str(payload.get("email") or payload.get("login") or "").strip().lower()
     reset_code = str(payload.get("reset_code") or payload.get("code") or "").strip()
     new_password = str(payload.get("new_password") or payload.get("password") or "").strip()
-    rate_limit_key = _check_auth_rate_limit(request, "representative-reset", provided_email)
+    rate_limit_keys = _check_auth_rate_limit(request, "representative-reset", provided_email)
 
     try:
         user = reset_representative_password_with_code(provided_email, reset_code, new_password)
     except KeyError:
-        _record_auth_failure(rate_limit_key)
-        raise HTTPException(status_code=404, detail="Representative not found") from None
+        _record_auth_failure(rate_limit_keys)
+        raise HTTPException(status_code=400, detail="Invalid email, reset code, or new password") from None
     except ValueError as exc:
-        _record_auth_failure(rate_limit_key)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _clear_auth_failures(rate_limit_key)
+        _record_auth_failure(rate_limit_keys)
+        raise HTTPException(status_code=400, detail="Invalid email, reset code, or new password") from exc
+    _clear_auth_failures(rate_limit_keys)
 
     return {
         "success": True,
@@ -559,7 +733,7 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
     if not provided_password:
         raise HTTPException(status_code=400, detail="Missing password")
 
-    rate_limit_key = _check_auth_rate_limit(request, "admin-login", provided_email or "admin")
+    rate_limit_keys = _check_auth_rate_limit(request, "admin-login", provided_email or "admin")
     selected_user = None
     if provided_email:
         selected_user = next((user for user in admin_users if secrets.compare_digest(user["email"], provided_email)), None)
@@ -567,9 +741,9 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
         selected_user = admin_users[0]
 
     if not selected_user or not verify_admin_password(selected_user, provided_password):
-        _record_auth_failure(rate_limit_key)
+        _record_auth_failure(rate_limit_keys)
         raise HTTPException(status_code=403, detail="Credenciais administrativas inválidas.")
-    _clear_auth_failures(rate_limit_key)
+    _clear_auth_failures(rate_limit_keys)
 
     _mark_admin_session(request, provider="password", email=selected_user["email"])
     return auth_session_status(request)

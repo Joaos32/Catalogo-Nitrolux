@@ -196,7 +196,7 @@ def _request_named_images(codes: List[str], folder_id: str | None = None) -> Dic
     return matches
 
 
-@cached
+@cached(stale_if_error=True)
 def _request_named_images_cached(
     codes: tuple[str, ...], folder_id: str | None = None
 ) -> Dict[str, List[Dict]]:
@@ -204,7 +204,7 @@ def _request_named_images_cached(
     return _request_named_images(list(codes), folder_id=folder_id)
 
 
-@cached
+@cached(stale_if_error=True)
 def list_google_drive_images(folder_id: str | None = None, max_depth: int | None = None) -> List[Dict]:
     root_folder_id = _parse_folder_id(folder_id or _optional_env("CATALOG_GOOGLE_DRIVE_FOLDER_ID"))
     if not root_folder_id:

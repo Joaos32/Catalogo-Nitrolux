@@ -7,6 +7,8 @@ import os
 import hashlib
 import json
 from functools import lru_cache
+import threading
+import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -25,6 +27,9 @@ PREBUILT_SOURCE_PATHS = {
     },
 }
 PHOTO_FIELDS = ("URLFoto", "FotoBranco", "FotoAmbient", "FotoMedidas")
+_SERVERLESS_CATALOG_TTL_SECONDS = 10
+_catalog_cache_lock = threading.Lock()
+_catalog_cache_refreshed_at = 0.0
 
 
 def _remove_unavailable_local_photo_urls(products: List[Dict]) -> List[Dict]:
@@ -87,8 +92,10 @@ def _build_catalog_products() -> List[Dict]:
             # Vercel's immutable filesystem, so replace them with the media
             # providers configured in the deployment before caching the result.
             from .. import cdn_media, vercel_blob_media
+            from ..erp_catalog import merge_products_with_erp
 
-            products = cdn_media.enrich_products_with_photos(prebuilt)
+            products = merge_products_with_erp(prebuilt)
+            products = cdn_media.enrich_products_with_photos(products)
             products = vercel_blob_media.enrich_products_with_photos(products)
             return _remove_unavailable_local_photo_urls(products)
     return _build_catalog_products_from_sources()
@@ -100,9 +107,15 @@ def _cached_catalog_products() -> tuple[Dict, ...]:
 
 
 def list_catalog_products() -> List[Dict]:
+    global _catalog_cache_refreshed_at
     # Files bundled into a Vercel deployment are immutable. Reusing the merged
     # catalog avoids reparsing and enriching thousands of products per request.
     if str(os.getenv("VERCEL") or "").strip().lower() in {"1", "true", "yes"}:
+        now = time.monotonic()
+        with _catalog_cache_lock:
+            if now - _catalog_cache_refreshed_at >= _SERVERLESS_CATALOG_TTL_SECONDS:
+                _cached_catalog_products.cache_clear()
+                _catalog_cache_refreshed_at = now
         return list(_cached_catalog_products())
     return _build_catalog_products()
 
