@@ -568,7 +568,9 @@ npx vercel
 npx vercel --prod
 ```
 
-As rotas e o build já estão definidos em `vercel.json`. Consulte [docs/vercel.md](docs/vercel.md) para variáveis obrigatórias e limitações de persistência.
+As rotas e o build estao definidos em `vercel.json`, com Blob privado para usuarios e ERP. Consulte [a configuracao do Blob no projeto da empresa](docs/vercel-blob.md) para preservar os dados atuais e reduzir operacoes avancadas.
+
+Consulte [docs/vercel.md](docs/vercel.md) para variáveis obrigatórias e limitações de persistência.
 
 Não há manifesto Kubernetes nem pipeline automatizado de publicação no repositório.
 

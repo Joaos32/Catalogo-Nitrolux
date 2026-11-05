@@ -70,6 +70,10 @@ class TTLCache:
             while len(self.store) > self.max_entries:
                 self.store.popitem(last=False)
 
+    def delete(self, key: Any) -> None:
+        with self._store_lock:
+            self.store.pop(key, None)
+
     @contextmanager
     def lock_for(self, key: Any) -> Iterator[None]:
         """Coalesce concurrent cache misses for one key without blocking others."""

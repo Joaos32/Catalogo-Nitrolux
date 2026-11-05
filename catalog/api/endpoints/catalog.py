@@ -64,7 +64,7 @@ def _catalog_headers(etag: str) -> dict[str, str]:
 
 
 @router.get("/sheet", response_model=list[CatalogProductSchema])
-async def sheet_data(url: str | None = None):
+def sheet_data(url: str | None = None):
     """Retorna dados JSON de uma planilha Google via parametro de consulta `url`."""
     if not url:
         return JSONResponse(status_code=400, content={"error": "missing url query parameter"})

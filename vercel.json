@@ -2,7 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "fluid": true,
-  "regions": ["gru1"],
+  "regions": [
+    "gru1"
+  ],
   "installCommand": "npm --prefix frontend ci",
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
@@ -14,6 +16,7 @@
     "CATALOG_SESSION_COOKIE_SECURE": "true",
     "CATALOG_SESSION_MAX_AGE_SECONDS": "300",
     "CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES": "5",
+    "CATALOG_STATE_BACKEND": "blob",
     "CATALOG_MEDIA_BLOB_ENABLED": "false",
     "CATALOG_ERP_BLOB_ENABLED": "true"
   },
@@ -52,6 +55,33 @@
     {
       "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self' https://login.microsoftonline.com"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(self), microphone=(), geolocation=()"
+        }
+      ]
     }
   ]
 }

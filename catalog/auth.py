@@ -7,10 +7,11 @@ import logging
 import secrets
 import threading
 import time
+from uuid import uuid4
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import List
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from msal import ConfidentialClientApplication, SerializableTokenCache
 from dotenv import load_dotenv
@@ -18,7 +19,11 @@ from dotenv import load_dotenv
 from catalog.core import load_settings
 from catalog.admin_registry import list_admin_login_users, verify_admin_password
 from catalog.admin_access import require_admin_host
+from catalog.api.schemas.auth import LoginInput, PasswordResetInput
 from catalog.representative_registry import (
+    RegistryWriteConflictError,
+    _login_registry_state,
+    revoke_auth_sessions,
     list_representative_login_users,
     representative_login_storage_is_configured,
     reset_representative_password_with_code,
@@ -259,6 +264,7 @@ def _record_auth_failure(keys: tuple[str, ...]) -> None:
 
 
 def _clear_auth_failures(keys: tuple[str, ...]) -> None:
+    keys = tuple(key for key in keys if ":identity:" in key)
     table_name = str(os.getenv("CATALOG_AUTH_RATE_LIMIT_TABLE") or "").strip()
     if table_name:
         bucket = int(time.time()) // AUTH_RATE_LIMIT_WINDOW_SECONDS
@@ -281,7 +287,10 @@ def _clear_auth_failures(keys: tuple[str, ...]) -> None:
 
 def _admin_login_capabilities() -> dict[str, bool]:
     settings = load_settings()
-    admin_users = _admin_password_users()
+    try:
+        admin_users = _admin_password_users()
+    except RuntimeError:
+        admin_users = []
     return {
         "password_login_available": bool(admin_users),
         "password_login_requires_email": bool(admin_users and any(user["email"] != "admin" for user in admin_users)),
@@ -291,12 +300,16 @@ def _admin_login_capabilities() -> dict[str, bool]:
 
 
 def is_admin_login_configured() -> bool:
-    return bool(_admin_password_users() or AUTH_CONFIGURED)
+    try:
+        return bool(_admin_password_users() or AUTH_CONFIGURED)
+    except RuntimeError:
+        return True  # An unavailable registry must not enable open-admin mode.
 
 
-def _admin_password_users() -> list[dict[str, object]]:
+def _admin_password_users(*, fresh: bool = False) -> list[dict[str, object]]:
     users_by_email: dict[str, dict[str, object]] = {}
-    representative_users = list_representative_login_users()
+    state = _login_registry_state(fresh=fresh)
+    representative_users = state["users"]
     managed_representative_emails = {
         str(user["email"]).strip().lower()
         for user in representative_users
@@ -307,9 +320,10 @@ def _admin_password_users() -> list[dict[str, object]]:
             continue
         users_by_email[user["email"]] = {**user, "admin_source": "representative_registry"}
     for user in list_admin_login_users():
-        if user["email"] in managed_representative_emails:
+        if user["email"] in managed_representative_emails or user["email"] in state["blocked_emails"]:
             continue
-        users_by_email.setdefault(user["email"], {**user, "admin_source": "admin_registry"})
+        users_by_email.setdefault(user["email"], {**user, "admin_source": "admin_registry",
+                                                 "_revoked_sessions": state["revoked_sessions"]})
     return list(users_by_email.values())
 
 
@@ -322,7 +336,34 @@ def _request_session(request: Request) -> dict:
 def is_admin_session_authenticated(request: Request) -> bool:
     session = _request_session(request)
     payload = session.get(ADMIN_SESSION_KEY)
-    return bool(isinstance(payload, dict) and payload.get("authenticated"))
+    if not isinstance(payload, dict) or not payload.get("authenticated"):
+        return False
+    try:
+        logged_in = datetime.fromisoformat(str(payload.get("logged_in_at") or ""))
+        age = (datetime.now(timezone.utc) - logged_in).total_seconds()
+        absolute_limit = int(os.getenv("CATALOG_ADMIN_SESSION_ABSOLUTE_MAX_SECONDS") or 43200)
+        if absolute_limit <= 0 or age < 0 or age >= absolute_limit:
+            raise ValueError("Admin session expired")
+        if payload.get("provider") in {"password", "azure"}:
+            if payload["provider"] == "azure" and not AUTH_CONFIGURED:
+                raise ValueError("Azure authentication unavailable")
+            user = next((item for item in _admin_password_users(fresh=True) if item["email"] == payload.get("email")), None)
+            if not user or _session_is_revoked(payload.get("session_id"), user.get("_revoked_sessions", {})) or not secrets.compare_digest(str(payload.get("credential_version") or ""), _admin_credential_version(user)):
+                raise ValueError("Admin permission or credentials changed")
+        else:
+            raise ValueError("Admin authentication unavailable")
+    except Exception:
+        session.pop(ADMIN_SESSION_KEY, None)
+        return False
+    return True
+
+
+def _admin_credential_version(user: dict) -> str:
+    message = json.dumps([
+        user.get("email"), user.get("password_hash") or user.get("password"),
+        user.get("session_version"), user.get("admin_source"),
+    ], separators=(",", ":")).encode("utf-8")
+    return hmac.new(load_settings().session_secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
 def _get_admin_session_payload(request: Request) -> dict:
@@ -331,12 +372,14 @@ def _get_admin_session_payload(request: Request) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _mark_admin_session(request: Request, provider: str, email: str = "") -> None:
+def _mark_admin_session(request: Request, provider: str, email: str = "", user: dict | None = None) -> None:
     request.session[ADMIN_SESSION_KEY] = {
         "authenticated": True,
         "provider": provider,
         "email": email,
         "logged_in_at": datetime.now(timezone.utc).isoformat(),
+        "session_id": uuid4().hex,
+        "credential_version": _admin_credential_version(user) if user else None,
     }
 
 
@@ -354,14 +397,15 @@ def _urlsafe_b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(f"{value}{padding}".encode("ascii"))
 
 
-def _parse_representative_users() -> list[dict[str, str]]:
-    users = list_representative_login_users()
+def _parse_representative_users(*, strict: bool = False) -> list[dict[str, str]]:
+    users = list_representative_login_users(strict=strict, fresh=True)
     return [
         {
             "email": str(user["email"]),
             "name": str(user["name"]),
             "password": str(user.get("password") or ""),
             "password_hash": str(user.get("password_hash") or ""),
+            "session_version": str(user.get("session_version") or ""),
         }
         for user in users
     ]
@@ -410,7 +454,10 @@ def _sign_representative_token(message: str) -> str:
 def _build_representative_token(user: dict[str, str]) -> tuple[str, dict[str, object]]:
     now = int(time.time())
     expires_in = _representative_jwt_expires_seconds()
+    absolute_expiry = int(user.get("_session_expires_at") or now + 43200)
     claims: dict[str, object] = {
+        "session_id": str(user.get("_session_id") or uuid4().hex),
+        "session_expires_at": absolute_expiry,
         "sub": user["email"],
         "email": user["email"],
         "name": user["name"],
@@ -420,7 +467,7 @@ def _build_representative_token(user: dict[str, str]) -> tuple[str, dict[str, ob
         ),
         "iat": now,
         "nbf": now,
-        "exp": now + expires_in,
+        "exp": min(now + expires_in, absolute_expiry),
     }
     header = {"alg": "HS256", "typ": "JWT"}
     encoded_header = _urlsafe_b64encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
@@ -455,7 +502,11 @@ def _decode_representative_token(token: str) -> dict[str, object]:
     if not isinstance(payload.get("credential_version"), str):
         raise ValueError("missing representative credential version")
 
+    if not isinstance(payload.get("session_id"), str) or len(payload["session_id"]) != 32:
+        raise ValueError("Missing session identity; sign in again")
     now = int(time.time())
+    if int(payload.get("session_expires_at") or 0) <= now:
+        raise ValueError("Representative session expired")
     try:
         exp = int(payload.get("exp", 0))
         nbf = int(payload.get("nbf", 0))
@@ -523,12 +574,49 @@ def get_representative_claims(
         return None
 
 
+def _session_is_revoked(session_id: object, revoked: dict) -> bool:
+    if not isinstance(session_id, str) or len(session_id) != 32:
+        return True
+    key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return int(revoked.get(key) or 0) > int(time.time())
+
+
+def _revoke_request_sessions(request: Request, *, include_admin: bool) -> None:
+    sessions = []
+    token = _extract_bearer_token(request.headers.get("authorization")) or request.cookies.get(REPRESENTATIVE_COOKIE_NAME)
+    try:
+        claims = _decode_representative_token(token) if token else None
+    except (ValueError, TypeError):
+        claims = None
+    if claims:
+        sessions.append((str(claims["session_id"]), int(claims["session_expires_at"])))
+    # SessionMiddleware has already verified this cookie's signature. Do not report
+    # successful logout just because the identity provider is temporarily unavailable.
+    payload = _get_admin_session_payload(request) if include_admin else {}
+    if payload.get("authenticated") and isinstance(payload.get("session_id"), str) and len(payload["session_id"]) == 32:
+        logged_in = datetime.fromisoformat(payload["logged_in_at"]).timestamp()
+        expiry = int(logged_in) + int(os.getenv("CATALOG_ADMIN_SESSION_ABSOLUTE_MAX_SECONDS") or 43200)
+        sessions.append((payload["session_id"], expiry))
+    if not sessions:
+        return
+    for attempt in range(3):
+        try:
+            revoke_auth_sessions(sessions)
+            return
+        except RegistryWriteConflictError:
+            if attempt < 2:
+                continue
+        except Exception:
+            logger.exception("Unable to persist session revocation")
+        raise HTTPException(status_code=503, detail="Unable to confirm logout; try again")
+
+
 def _representative_credential_version(user: dict[str, object]) -> str:
     email = str(user.get("email") or user.get("sub") or "").strip().lower()
     credential = str(user.get("password_hash") or user.get("password") or "")
     if not email or not credential:
         return ""
-    message = f"{email}\0{credential}".encode("utf-8")
+    message = f"{email}\0{credential}\0{user.get('session_version') or ''}".encode("utf-8")
     digest = hmac.new(_representative_jwt_secret().encode("utf-8"), message, hashlib.sha256).digest()
     return _urlsafe_b64encode(digest)
 
@@ -538,16 +626,19 @@ def _representative_credentials_are_current(claims: dict[str, object]) -> bool:
     provided_version = str(claims.get("credential_version") or "")
     if not email or not provided_version:
         return False
-    users = list_representative_login_users()
+    users = list_representative_login_users(strict=True, fresh=True)
     current_user = next((user for user in users if user["email"] == email), None)
-    if current_user is None:
+    if current_user is None or _session_is_revoked(claims.get("session_id"), current_user.get("_revoked_sessions", {})):
         return False
     current_version = _representative_credential_version(current_user)
     return bool(current_version) and secrets.compare_digest(provided_version, current_version)
 
 
 def _representative_status_payload(claims: dict[str, object] | None) -> dict[str, object]:
+    from .online_users import activity_tracking_available
+
     capabilities = _representative_login_capabilities()
+    capabilities["activity_tracking_available"] = activity_tracking_available()
     if not claims:
         return {
             "authenticated": False,
@@ -631,9 +722,10 @@ auth_router = APIRouter()
 @auth_router.get("/auth/session", dependencies=[Depends(require_admin_host)])
 def auth_session_status(request: Request):
     capabilities = _admin_login_capabilities()
+    authenticated = is_admin_session_authenticated(request)
     payload = _get_admin_session_payload(request)
     return {
-        "authenticated": bool(payload.get("authenticated")),
+        "authenticated": authenticated,
         "provider": payload.get("provider"),
         "email": payload.get("email"),
         "logged_in_at": payload.get("logged_in_at"),
@@ -647,11 +739,19 @@ def representative_session_status(
     authorization: str | None = Header(default=None),
 ):
     claims = get_representative_claims(request, authorization)
+    if claims:
+        try:
+            from .online_users import record_representative_activity
+
+            record_representative_activity(claims)
+        except Exception:
+            logger.warning("Unable to update representative online activity", exc_info=True)
     return _representative_status_payload(claims)
 
 
 @auth_router.post("/auth/representative/login")
-def representative_login(request: Request, payload: dict = Body(...)):
+def representative_login(request: Request, payload: LoginInput):
+    payload = payload.model_dump(exclude_none=True)
     provided_email = str(payload.get("email") or payload.get("login") or "").strip().lower()
     provided_password = str(payload.get("password") or "").strip()
 
@@ -661,7 +761,10 @@ def representative_login(request: Request, payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="Missing password")
 
     rate_limit_keys = _check_auth_rate_limit(request, "representative-login", provided_email)
-    users = _parse_representative_users()
+    try:
+        users = _parse_representative_users(strict=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Representative storage is temporarily unavailable") from exc
     if not users:
         raise HTTPException(status_code=503, detail="Representative login not configured")
 
@@ -686,7 +789,8 @@ def representative_login(request: Request, payload: dict = Body(...)):
 
 
 @auth_router.post("/auth/representative/reset-password")
-def representative_reset_password(request: Request, payload: dict = Body(...)):
+def representative_reset_password(request: Request, payload: PasswordResetInput):
+    payload = payload.model_dump(exclude_none=True)
     provided_email = str(payload.get("email") or payload.get("login") or "").strip().lower()
     reset_code = str(payload.get("reset_code") or payload.get("code") or "").strip()
     new_password = str(payload.get("new_password") or payload.get("password") or "").strip()
@@ -694,6 +798,8 @@ def representative_reset_password(request: Request, payload: dict = Body(...)):
 
     try:
         user = reset_representative_password_with_code(provided_email, reset_code, new_password)
+    except RegistryWriteConflictError as exc:
+        raise HTTPException(status_code=409, detail="O cadastro foi alterado. Tente novamente.") from exc
     except KeyError:
         _record_auth_failure(rate_limit_keys)
         raise HTTPException(status_code=400, detail="Invalid email, reset code, or new password") from None
@@ -713,14 +819,19 @@ def representative_reset_password(request: Request, payload: dict = Body(...)):
 
 @auth_router.post("/auth/representative/logout")
 def representative_logout(request: Request):
+    _revoke_request_sessions(request, include_admin=False)
     response = JSONResponse({"success": True, "authenticated": False})
     _clear_representative_cookie(response, request)
     return response
 
 
 @auth_router.post("/auth/admin/login", dependencies=[Depends(require_admin_host)])
-def admin_password_login(request: Request, payload: dict = Body(...)):
-    admin_users = _admin_password_users()
+def admin_password_login(request: Request, payload: LoginInput):
+    payload = payload.model_dump(exclude_none=True)
+    try:
+        admin_users = _admin_password_users(fresh=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Authentication storage is temporarily unavailable") from exc
     if not admin_users:
         raise HTTPException(status_code=503, detail="Admin password login not configured")
 
@@ -745,12 +856,16 @@ def admin_password_login(request: Request, payload: dict = Body(...)):
         raise HTTPException(status_code=403, detail="Credenciais administrativas inválidas.")
     _clear_auth_failures(rate_limit_keys)
 
-    _mark_admin_session(request, provider="password", email=selected_user["email"])
-    return auth_session_status(request)
+    _mark_admin_session(request, provider="password", email=selected_user["email"], user=selected_user)
+    status = auth_session_status(request)
+    if not status["authenticated"]:
+        raise HTTPException(status_code=503, detail="Não foi possível confirmar sua sessão administrativa. Tente novamente em instantes.")
+    return status
 
 
 @auth_router.post("/auth/logout", dependencies=[Depends(require_admin_host)])
 def logout(request: Request):
+    _revoke_request_sessions(request, include_admin=True)
     _clear_admin_session(request)
     response = JSONResponse({"success": True, "authenticated": False})
     _clear_representative_cookie(response, request)
@@ -807,9 +922,14 @@ def callback(request: Request, code: str = None, state: str = None, error: str =
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
-    _save_cache()
     if "access_token" in result:
-        _mark_admin_session(request, provider="azure")
+        identity = result.get("id_token_claims") or {}
+        email = str(identity.get("preferred_username") or identity.get("email") or identity.get("upn") or "").strip().lower()
+        selected_user = next((user for user in _admin_password_users(fresh=True) if user["email"] == email), None)
+        if not email or selected_user is None:
+            raise HTTPException(status_code=403, detail="Azure account is not an authorized administrator")
+        _save_cache()
+        _mark_admin_session(request, provider="azure", email=email, user=selected_user)
         redirect_path = _sanitize_next_path(request.session.pop(POST_LOGIN_PATH_SESSION_KEY, DEFAULT_ADMIN_REDIRECT_PATH))
         response = RedirectResponse(redirect_path, status_code=303)
         response.delete_cookie(
@@ -819,5 +939,5 @@ def callback(request: Request, code: str = None, state: str = None, error: str =
             secure=_cache_cookie_secure(),
         )
         return response
-    logger.warning("OAuth token exchange failed: %s", result)
+    logger.warning("OAuth token exchange failed: %s", result.get("error") or "unknown_error")
     raise HTTPException(status_code=400, detail="OAuth token exchange failed")

@@ -81,6 +81,7 @@ Globals:
         CATALOG_ERP_S3_BUCKET: !Ref CatalogStateBucket
         CATALOG_ERP_S3_KEY: "catalog/erp_products.json"
         CATALOG_AUTH_RATE_LIMIT_TABLE: !Ref CatalogAuthRateLimitTable
+        CATALOG_ONLINE_USERS_TABLE: !Ref CatalogOnlineUsersTable
         CATALOG_GOOGLE_DRIVE_FOLDER_ID: !Ref GoogleDriveFolderId
         CATALOG_GOOGLE_DRIVE_API_KEY: !Ref GoogleDriveApiKey
         CATALOG_GOOGLE_DRIVE_RECURSIVE: "true"
@@ -117,6 +118,12 @@ Resources:
                 - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
               Resource: !GetAtt CatalogAuthRateLimitTable.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:UpdateItem
+              Resource: !GetAtt CatalogOnlineUsersTable.Arn
       Events:
         Root:
           Type: HttpApi
@@ -181,6 +188,20 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: bucket_key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  CatalogOnlineUsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_key
           KeyType: HASH
       TimeToLiveSpecification:
         AttributeName: expires_at
@@ -416,3 +437,6 @@ Outputs:
   CatalogAuthRateLimitTableName:
     Description: Shared authentication attempt counters across Lambda instances
     Value: !Ref CatalogAuthRateLimitTable
+  CatalogOnlineUsersTableName:
+    Description: Shared online representative activity with automatic expiration
+    Value: !Ref CatalogOnlineUsersTable

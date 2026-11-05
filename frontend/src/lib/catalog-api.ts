@@ -1,4 +1,5 @@
-﻿import { API_BASES, REQUEST_TIMEOUT_MS } from "./catalog-core";
+import { API_BASES, REQUEST_TIMEOUT_MS } from "./catalog-core";
+import { prepareTechnicalSheet } from "./prepare-technical-sheet";
 import type {
   CatalogExportOptions,
   ErpFileRecord,
@@ -12,6 +13,7 @@ import type {
   RepresentativeAuthResponse,
   RepresentativeAdminDeleteResponse,
   RepresentativeAdminListResponse,
+  OnlineRepresentativesResponse,
   RepresentativeAdminSavePayload,
   RepresentativeAdminSaveResponse,
   RepresentativePasswordResetCompleteResponse,
@@ -20,6 +22,8 @@ import type {
   ProductImagesResponse,
   ProductPhotos,
   ProductRecord,
+  TechnicalSheetPreview,
+  TechnicalSheetImportSummary,
 } from "../types";
 
 let activeApiOrigin: string | null = null;
@@ -246,8 +250,9 @@ export async function downloadImageFile(url: string, filenameBase: string): Prom
   } catch (error) {
     // Uma âncora para uma URL externa ignora o atributo `download` e abre a
     // imagem em outra aba. Não navegue como fallback: preserve o contrato de
-    // download e deixe a falha visível no console para diagnóstico.
+    // download e propague a falha para o aviso exibido pela interface.
     console.warn(`Falha ao baixar imagem em ${targetUrl}.`, error);
+    throw error;
   }
 }
 
@@ -256,7 +261,11 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    return await fetch(url, { ...(init || {}), signal: controller.signal });
+    const headers = new Headers(init?.headers);
+    if (!["GET", "HEAD", "OPTIONS"].includes((init?.method || "GET").toUpperCase())) {
+      headers.set("X-Catalog-Request", "1");
+    }
+    return await fetch(url, { ...(init || {}), headers, signal: controller.signal });
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -442,15 +451,19 @@ export async function fetchPhotosByCodes(codes: string[]): Promise<Record<string
   const normalizedCodes = Array.from(new Set(codes.map((code) => String(code || "").trim()).filter(Boolean)));
   if (normalizedCodes.length === 0) return {};
 
-  const payload = await requestJsonFromBases<unknown>(
-    (base) => `${base}/catalog/photos/batch?codes=${encodeURIComponent(normalizedCodes.join(","))}`,
-    { credentials: "include" }
-  );
-  if (!isRecord(payload)) return {};
-
-  return Object.fromEntries(
-    Object.entries(payload).map(([code, value]) => [code, normalizePhotos(value)] as const)
-  );
+  const result: Record<string, ProductPhotos | null> = {};
+  // Keep the API's bounded batch contract. Sequential batches also bound provider load.
+  for (let start = 0; start < normalizedCodes.length; start += 30) {
+    const batch = normalizedCodes.slice(start, start + 30);
+    const payload = await requestJsonFromBases<unknown>(
+      (base) => `${base}/catalog/photos/batch?codes=${encodeURIComponent(batch.join(","))}`,
+      // Revalidate older empty responses; React Query already limits repeat lookups.
+      { credentials: "include", cache: "no-cache" }
+    );
+    if (!isRecord(payload)) throw new Error("Resposta de fotos inválida.");
+    for (const [code, value] of Object.entries(payload)) result[code] = normalizePhotos(value);
+  }
+  return result;
 }
 
 export async function fetchImagesByCode(code: string): Promise<ProductImagesResponse | null> {
@@ -528,7 +541,7 @@ export async function uploadErpJsonFile(file: File, adminToken?: string): Promis
     (base) => `${base}/catalog/erp/upload?filename=${encodeURIComponent(file.name || "erp_upload.json")}`,
     {
       method: "POST",
-      headers: withAdminHeaders({ "Content-Type": file.type || "application/json" }, adminToken),
+      headers: withAdminHeaders({ "Content-Type": "application/json" }, adminToken),
       credentials: "include",
       body: content,
     }
@@ -541,7 +554,7 @@ export async function stageErpJsonFile(file: File, adminToken?: string): Promise
     (base) => `${base}/catalog/erp/stage-file?filename=${encodeURIComponent(file.name || "erp_upload.json")}`,
     {
       method: "POST",
-      headers: withAdminHeaders({ "Content-Type": file.type || "application/json" }, adminToken),
+      headers: withAdminHeaders({ "Content-Type": "application/json" }, adminToken),
       credentials: "include",
       body: content,
     }
@@ -589,6 +602,12 @@ export async function logoutAdminSession(): Promise<{ success: boolean; authenti
 export async function fetchRepresentativeUsers(adminToken?: string): Promise<RepresentativeAdminListResponse> {
   return requestJsonFromBases<RepresentativeAdminListResponse>((base) => `${base}/catalog/representatives`, {
     headers: withAdminHeaders(undefined, adminToken),
+    credentials: "include",
+  });
+}
+
+export async function fetchOnlineRepresentatives(): Promise<OnlineRepresentativesResponse> {
+  return requestJsonFromBases<OnlineRepresentativesResponse>((base) => `${base}/catalog/online-users`, {
     credentials: "include",
   });
 }
@@ -681,4 +700,26 @@ export async function logoutRepresentative(): Promise<{ success: boolean; authen
       credentials: "include",
     }
   );
+}
+
+
+export async function previewTechnicalSheet(file: File, sheet?: string): Promise<TechnicalSheetPreview> {
+  const params = new URLSearchParams({ filename: file.name });
+  if (sheet) params.set("sheet", sheet);
+  return requestJsonFromBases<TechnicalSheetPreview>((base) => `${base}/catalog/erp/technical-sheet/preview?${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    credentials: "include",
+    body: await prepareTechnicalSheet(file),
+  });
+}
+
+export async function importTechnicalSheet(file: File, preview: TechnicalSheetPreview): Promise<TechnicalSheetImportSummary> {
+  const params = new URLSearchParams({ filename: file.name, sheet: preview.sheet, preview_key: preview.preview_key });
+  return requestJsonFromBases<TechnicalSheetImportSummary>((base) => `${base}/catalog/erp/technical-sheet/import?${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    credentials: "include",
+    body: await prepareTechnicalSheet(file),
+  });
 }

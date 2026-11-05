@@ -222,6 +222,7 @@ def test_representative_session_endpoint_reports_open_access_by_default(monkeypa
         "expires_at": None,
         "login_available": False,
         "protection_enabled": False,
+        "activity_tracking_available": True,
         "user": None,
     }
 

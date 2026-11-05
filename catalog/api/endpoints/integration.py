@@ -148,7 +148,7 @@ async def integration_pienza_products(request: Request):
     "/integration/categories",
     dependencies=[Depends(require_integration_api_key)],
 )
-async def integration_categories():
+def integration_categories():
     """Lista as categorias e quantidades disponíveis para consulta."""
     _refresh_integration_cache_if_stale()
     counts = Counter(

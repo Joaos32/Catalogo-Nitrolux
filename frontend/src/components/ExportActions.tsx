@@ -1,12 +1,17 @@
-﻿import type { CatalogExportFormat } from "../types";
+import type { CatalogExportFormat } from "../types";
+
+import { useDownloadAction, type DownloadAction } from "../lib/use-download-action";
+import DownloadFeedback from "./DownloadFeedback";
 
 interface ExportActionsProps {
   title: string;
   note?: string;
-  onExport: (format: CatalogExportFormat) => void;
+  onExport: (format: CatalogExportFormat) => Promise<void>;
   disabled?: boolean;
   compact?: boolean;
   includeTechnicalSheet?: boolean;
+  collapsible?: boolean;
+  downloadAction?: DownloadAction;
 }
 
 const EXPORT_BUTTONS: Array<{ format: CatalogExportFormat; label: string }> = [
@@ -24,15 +29,16 @@ export default function ExportActions({
   disabled = false,
   compact = false,
   includeTechnicalSheet = false,
+  collapsible = false,
+  downloadAction,
 }: ExportActionsProps): JSX.Element {
+  const localDownload = useDownloadAction();
+  const download = downloadAction ?? localDownload;
   const buttons = includeTechnicalSheet
-    ? [
-        { format: "ficha" as CatalogExportFormat, label: "Ficha técnica" },
-        ...EXPORT_BUTTONS,
-      ]
+    ? [{ format: "ficha" as CatalogExportFormat, label: "Ficha técnica" }, ...EXPORT_BUTTONS]
     : EXPORT_BUTTONS;
 
-  return (
+  const panel = (
     <section className={`export-panel ${compact ? "is-compact" : ""}`} aria-label={title}>
       <div className="export-copy">
         <strong>{title}</strong>
@@ -45,13 +51,30 @@ export default function ExportActions({
             key={item.format}
             type="button"
             className="export-button"
-            onClick={() => onExport(item.format)}
-            disabled={disabled}
+            onClick={() => void download.run(item.label, () => onExport(item.format))}
+            disabled={disabled || download.pending !== null}
           >
-            {item.label}
+            {download.pending === item.label ? `Preparando ${item.label}…` : item.label}
           </button>
         ))}
       </div>
+      {!downloadAction && <DownloadFeedback feedback={download.feedback} />}
     </section>
+  );
+  return collapsible ? (
+    <details
+      className="export-menu"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.currentTarget.open = false;
+          event.currentTarget.querySelector("summary")?.focus();
+        }
+      }}
+    >
+      <summary className="export-button">Baixar catálogo</summary>
+      {panel}
+    </details>
+  ) : (
+    panel
   );
 }

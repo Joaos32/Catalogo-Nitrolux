@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/photos", response_model=ProductPhotosSchema)
-async def photos(response: Response, shareUrl: str | None = None, code: str | None = None):
+def photos(response: Response, shareUrl: str | None = None, code: str | None = None):
     """Retorna URLs de fotos categorizadas do OneDrive local ou Microsoft Graph."""
     try:
         response.headers["Cache-Control"] = "private, max-age=300, stale-while-revalidate=600"
@@ -41,7 +41,7 @@ async def photos(response: Response, shareUrl: str | None = None, code: str | No
 
 
 @router.get("/photos/batch", response_model=dict[str, ProductPhotosSchema])
-async def photos_batch(response: Response, codes: str | None = None):
+def photos_batch(response: Response, codes: str | None = None):
     """Retorna as fotos de varios produtos em uma unica chamada."""
     requested_codes = list(dict.fromkeys(
         item.strip() for item in str(codes or "").split(",") if item.strip()
@@ -51,41 +51,45 @@ async def photos_batch(response: Response, codes: str | None = None):
     if len(requested_codes) > 30:
         return JSONResponse(status_code=400, content={"error": "too many product codes"})
 
-    response.headers["Cache-Control"] = "private, max-age=300, stale-while-revalidate=600"
+    drive_failed = False
     try:
         drive_payload = get_google_drive_photos_batch_payload(requested_codes)
+    except ValueError:
+        # A missing provider configuration is different from an upstream outage.
+        drive_payload = None
     except Exception:
+        drive_failed = True
+        logger.exception("Photo batch provider failed: provider=google-drive count=%s", len(requested_codes))
         drive_payload = None
 
     payload: dict[str, dict[str, str | None]] = {}
     for product_code in requested_codes:
-        if drive_payload is not None:
-            photos_payload = drive_payload.get(product_code) or {}
-            fallback_payload = {}
-            if not any(photos_payload.get(field) for field in ("white_background", "ambient", "measures")):
-                try:
-                    fallback_payload = get_product_photos_payload(code=product_code)
-                except Exception:
-                    fallback_payload = {}
+        photos_payload = (drive_payload or {}).get(product_code) or {}
+        if not any(photos_payload.get(field) for field in ("white_background", "ambient", "measures")):
+            try:
+                fallback = get_product_photos_payload(code=product_code)
+                if drive_failed and not any(fallback.values()):
+                    raise RuntimeError("No photo provider recovered the failed lookup")
+            except Exception:
+                logger.exception("Photo batch fallback failed: code=%s", product_code)
+                return JSONResponse(
+                    status_code=503, content={"error": "Fotos temporariamente indisponíveis. Tente novamente."},
+                    headers={"Cache-Control": "no-store", "Retry-After": "10"},
+                )
             photos_payload = {
-                field: photos_payload.get(field) or fallback_payload.get(field)
+                field: photos_payload.get(field) or fallback.get(field)
                 for field in ("white_background", "ambient", "measures")
             }
-        else:
-            try:
-                photos_payload = get_product_photos_payload(code=product_code)
-            except Exception:
-                photos_payload = {}
         payload[product_code] = {
-            "white_background": photos_payload.get("white_background"),
-            "ambient": photos_payload.get("ambient"),
-            "measures": photos_payload.get("measures"),
+            field: photos_payload.get(field)
+            for field in ("white_background", "ambient", "measures")
         }
+    response.headers["Cache-Control"] = "private, max-age=300, stale-while-revalidate=600"
     return payload
 
 
 @router.get("/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def product_images(codigo: str, response: Response, shareUrl: str | None = None):
+def product_images(codigo: str, response: Response, shareUrl: str | None = None):
     """Retorna todas as variacoes de imagem para um codigo de produto."""
     try:
         response.headers["Cache-Control"] = "private, max-age=60"
@@ -98,7 +102,7 @@ async def product_images(codigo: str, response: Response, shareUrl: str | None =
 
 
 @router.get("/google-drive/photos", response_model=ProductPhotosSchema)
-async def google_drive_photos(response: Response, code: str | None = None):
+def google_drive_photos(response: Response, code: str | None = None):
     """Retorna fotos categorizadas encontradas no Google Drive para um codigo."""
     try:
         response.headers["Cache-Control"] = "private, max-age=60"
@@ -111,7 +115,7 @@ async def google_drive_photos(response: Response, code: str | None = None):
 
 
 @router.get("/media/google-drive/{file_id}")
-async def google_drive_media(file_id: str, size: str = "detail"):
+def google_drive_media(file_id: str, size: str = "detail"):
     """Serve uma imagem do Google Drive no mesmo dominio do catalogo."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,200}", str(file_id or "")):
         return JSONResponse(status_code=400, content={"error": "invalid Google Drive file id"})
@@ -121,7 +125,7 @@ async def google_drive_media(file_id: str, size: str = "detail"):
         return Response(
             content=content,
             media_type=media_type,
-            headers={"Cache-Control": "public, max-age=86400, s-maxage=86400"},
+            headers={"Cache-Control": "private, no-store"},
         )
     except ValueError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
@@ -131,7 +135,7 @@ async def google_drive_media(file_id: str, size: str = "detail"):
 
 
 @router.get("/google-drive/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def google_drive_product_images(codigo: str, response: Response):
+def google_drive_product_images(codigo: str, response: Response):
     """Retorna a galeria de imagens do Google Drive para um codigo de produto."""
     try:
         response.headers["Cache-Control"] = "private, max-age=60"
@@ -144,7 +148,7 @@ async def google_drive_product_images(codigo: str, response: Response):
 
 
 @router.get("/s3/photos", response_model=ProductPhotosSchema)
-async def s3_photos(response: Response, code: str | None = None):
+def s3_photos(response: Response, code: str | None = None):
     """Retorna fotos categorizadas encontradas no S3 para um codigo."""
     try:
         response.headers["Cache-Control"] = "private, max-age=60"
@@ -157,7 +161,7 @@ async def s3_photos(response: Response, code: str | None = None):
 
 
 @router.get("/s3/produtos/{codigo}/imagens", response_model=ProductImagesResponseSchema)
-async def s3_product_images(codigo: str, response: Response):
+def s3_product_images(codigo: str, response: Response):
     """Retorna a galeria de imagens do S3 para um codigo de produto."""
     try:
         response.headers["Cache-Control"] = "private, max-age=60"

@@ -39,6 +39,10 @@ def tmp_path():
 @pytest.fixture(autouse=True)
 def isolate_runtime_environment(monkeypatch, tmp_path):
     for env_key in (
+        "CATALOG_STATE_BACKEND",
+        "CATALOG_STATE_DATABASE_URL",
+        "CATALOG_ONLINE_USERS_TABLE",
+        "CATALOG_ONLINE_USERS_FILE",
         "CATALOG_LOCAL_PRODUCTS_PATH",
         "CATALOG_CADASTRO_HTML",
         "CATALOG_STOCK_REPORT_PATH",
@@ -85,6 +89,7 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
         "CATALOG_REPRESENTATIVE_IDLE_TIMEOUT_MINUTES",
         "CATALOG_SESSION_SECRET",
         "CATALOG_SESSION_MAX_AGE_SECONDS",
+        "CATALOG_ADMIN_SESSION_ABSOLUTE_MAX_SECONDS",
         "CATALOG_NITROLUX_DB_ENABLED",
         "CATALOG_NITROLUX_DB_URL",
         "CATALOG_NITROLUX_DB_HOST",
@@ -100,6 +105,12 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
         "CATALOG_NITROLUX_DB_MASTER_BOX_COLUMN",
         "CATALOG_ENABLE_API_DOCS",
         "CATALOG_EXPORT_MAX_REMOTE_IMAGE_BYTES",
+        "CATALOG_MEDIA_MAX_IMAGE_BYTES",
+        "CATALOG_EXPORT_MAX_BYTES",
+        "CATALOG_EXPORT_MAX_SECONDS",
+        "CATALOG_EXPORT_MAX_ZIP_PRODUCTS",
+        "CATALOG_EXPORT_MAX_PDF_PRODUCTS",
+        "CATALOG_EXPORT_MAX_PDF_PAGES",
         "OneDrive",
         "OneDriveCommercial",
         "OneDriveConsumer",
@@ -111,20 +122,26 @@ def isolate_runtime_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("CATALOG_SKIP_DOTENV", "true")
     monkeypatch.setenv("CATALOG_ADMIN_USERS_FILE", str(tmp_path / "disabled-admin-users.json"))
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_USERS_FILE", str(tmp_path / "disabled-representative-users.json"))
+    monkeypatch.setenv("CATALOG_ONLINE_USERS_FILE", str(tmp_path / "online-users.json"))
     monkeypatch.setenv("CATALOG_SESSION_SECRET", "pytest-session-secret")
     monkeypatch.setenv("CATALOG_STOCK_REPORT_AUTO_DISCOVERY", "false")
     monkeypatch.setenv("CATALOG_LOCAL_PRODUCTS_HOME_FALLBACK", "false")
     monkeypatch.setenv("CATALOG_STOCK_PHOTOS_HOME_FALLBACK", "false")
     monkeypatch.setenv(
         "CATALOG_ERP_JSON_PATH",
-        str(LOCAL_TMP_ROOT / "disabled-erp.json"),
+        str(tmp_path / "disabled-erp.json"),
     )
 
+    monkeypatch.setenv("CATALOG_ERP_INBOX_DIR", str(tmp_path / "erp-inbox"))
+
     from catalog.cache import cache
+    from catalog.blob_cache import snapshots
     from catalog.auth import _AUTH_FAILURES
 
     cache.store.clear()
+    snapshots.store.clear()
     _AUTH_FAILURES.clear()
     yield
     cache.store.clear()
+    snapshots.store.clear()
     _AUTH_FAILURES.clear()

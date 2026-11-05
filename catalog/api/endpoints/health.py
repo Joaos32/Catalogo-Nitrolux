@@ -43,13 +43,13 @@ def _erp_storage_is_ready() -> bool:
 
 @router.get("")
 @router.get("/live")
-async def liveness():
+def liveness():
     """Signal that the API process can receive requests."""
     return {"status": "live"}
 
 
 @router.get("/ready")
-async def readiness():
+def readiness():
     """Check the bundled catalog required by serverless deployments."""
     if not _is_serverless_runtime():
         return {"status": "ready", "checks": {"catalog_bundle": "not_required"}}

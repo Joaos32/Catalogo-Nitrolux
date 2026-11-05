@@ -23,6 +23,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 
 from . import onedrive
+from .resource_limits import (
+    ExportLimitError, check_export_budget, check_export_size,
+    export_budget, network_timeout, positive_limit,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -140,6 +144,7 @@ def _enrich_products_with_export_photos(
     enriched: List[Dict[str, Any]] = []
 
     for product in products:
+        check_export_budget()
         merged = dict(product)
         code = _stringify(product.get("Codigo"))
         if not code:
@@ -148,6 +153,8 @@ def _enrich_products_with_export_photos(
 
         try:
             resolved = get_product_photos_payload(code=code)
+        except ExportLimitError:
+            raise
         except Exception as exc:
             logger.warning("Could not resolve export photos for product %s: %s", code, exc)
             enriched.append(merged)
@@ -244,12 +251,14 @@ def _download_remote_image_bytes(url: str) -> tuple[bytes | None, str]:
     try:
         response = requests.get(
             url,
-            timeout=8,
+            timeout=network_timeout(8),
             stream=True,
             allow_redirects=False,
             headers={"Accept": "image/*"},
         )
         response.raise_for_status()
+    except ExportLimitError:
+        raise
     except Exception:
         return None, ""
 
@@ -272,6 +281,7 @@ def _download_remote_image_bytes(url: str) -> tuple[bytes | None, str]:
         for chunk in response.iter_content(chunk_size=64 * 1024):
             if not chunk:
                 continue
+            check_export_budget()
             payload.extend(chunk)
             if len(payload) > max_bytes:
                 return None, ""
@@ -299,6 +309,7 @@ def _filter_products(
     filtered: List[Dict[str, Any]] = []
 
     for product in products:
+        check_export_budget()
         product_code = _stringify(product.get("Codigo"))
         if normalized_code and product_code != normalized_code:
             continue
@@ -344,23 +355,24 @@ def _tabular_rows(products: Sequence[Dict[str, Any]]) -> tuple[List[str], List[D
     columns = _ordered_columns(products)
     rows: List[Dict[str, str]] = []
     for product in products:
+        check_export_budget()
         rows.append({column: _stringify(product.get(column)) for column in columns})
     return columns, rows
 
 
+def _spreadsheet_text(value: Any) -> str:
+    text = str(value if value is not None else "")
+    # Numeric values remain numbers; all supplied text must stay literal text.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return text
+    if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")):
+        return "'" + text
+    return text
+
+
 def _build_csv_bytes(products: Sequence[Dict[str, Any]]) -> bytes:
-    columns, rows = _tabular_rows(products)
-    buffer = StringIO(newline="")
-    writer = csv.DictWriter(
-        buffer,
-        fieldnames=columns,
-        extrasaction="ignore",
-        delimiter=";",
-        lineterminator="\r\n",
-    )
-    writer.writeheader()
-    writer.writerows(rows)
-    return buffer.getvalue().encode("utf-8-sig")
+    columns = _ordered_columns(products)
+    return _csv_from_rows(products, columns)
 
 
 def _build_json_bytes(
@@ -396,12 +408,18 @@ def _build_xlsx_bytes(products: Sequence[Dict[str, Any]]) -> bytes:
     worksheet.append(columns)
     for row in rows:
         worksheet.append([row.get(column, "") for column in columns])
+    # openpyxl infers formulas from '=' even in imported product names and headers.
+    for row in worksheet.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
     for index, column in enumerate(columns, start=1):
         values = [column, *(row.get(column, "") for row in rows)]
         width = min(max((len(str(value)) for value in values), default=10) + 2, 60)
         worksheet.column_dimensions[get_column_letter(index)].width = width
     workbook.save(output)
 
+    check_export_size(output.tell())
     return output.getvalue()
 
 
@@ -492,6 +510,8 @@ def _load_brand_banner() -> Image.Image | None:
                 if image.mode != "RGB":
                     image = image.convert("RGB")
                 return image.copy()
+        except ExportLimitError:
+            raise
         except Exception:
             continue
     return None
@@ -838,6 +858,8 @@ def _photo_references(product: Dict[str, Any]) -> List[Dict[str, str]]:
                 label = _stringify(image.get("name")) or f"Imagem {index}"
                 references.append({"label": label, "url": url})
                 seen.add(url)
+        except ExportLimitError:
+            raise
         except Exception:
             pass
 
@@ -867,6 +889,8 @@ def _resolve_photo_bytes(url: str) -> tuple[bytes | None, str]:
 
             payload, media_type = fetch_google_drive_image(file_id, size="detail")
             return payload, mimetypes.guess_extension(media_type) or ".jpg"
+        except ExportLimitError:
+            raise
         except Exception:
             return None, ""
 
@@ -884,6 +908,8 @@ def _resolve_photo_bytes(url: str) -> tuple[bytes | None, str]:
 
                     payload, media_type = fetch_google_drive_image(file_id, size="detail")
                     return payload, mimetypes.guess_extension(media_type) or ".jpg"
+                except ExportLimitError:
+                    raise
                 except Exception:
                     return None, ""
 
@@ -900,6 +926,8 @@ def _resolve_photo_bytes(url: str) -> tuple[bytes | None, str]:
             content_type = str(getattr(asset, "content_type", "") or "")
             extension = Path(unquote(blob_path)).suffix.lower()
             return asset.content, extension or mimetypes.guess_extension(content_type) or ".jpg"
+        except ExportLimitError:
+            raise
         except Exception:
             return None, ""
 
@@ -923,6 +951,8 @@ def _open_image_for_export(url: str) -> Image.Image | None:
                 background.paste(image, mask=image.split()[-1])
                 image = background
             return image.copy()
+    except ExportLimitError:
+        raise
     except Exception:
         return None
 
@@ -1145,6 +1175,11 @@ def _build_product_pdf_pages(product: Dict[str, Any]) -> List[Image.Image]:
         if label not in {"CODPROD", "CODAUXILIAR", "NBM", "PERCIPIVENDA"}
     ][18:]
     while remaining_attributes:
+        check_export_budget()
+        if len(pages) >= positive_limit("CATALOG_EXPORT_MAX_PDF_PAGES", 10):
+            for rendered_page in pages:
+                rendered_page.close()
+            raise ExportLimitError("A ficha técnica excedeu o limite de páginas.")
         extra_page, extra_draw = _new_pdf_page()
         header_box = (60, 56, 1180, 196)
         _rounded_box(extra_draw, header_box, fill="#123f87", radius=30)
@@ -1192,6 +1227,7 @@ def _build_catalog_pdf_pages(
     ]
 
     for page_index, start in enumerate(range(0, len(products), rows_per_page), start=1):
+        check_export_budget()
         page, draw = _new_pdf_page()
         y = PAGE_MARGIN
         draw.text((PAGE_MARGIN, y), "Catalogo de Produtos", fill="#123874", font=title_font)
@@ -1242,21 +1278,27 @@ def _build_pdf_bytes(
     output = BytesIO()
     first_page, *other_pages = pages
     is_technical_sheet = len(products) == 1
-    first_page.save(
-        output,
-        format="PDF",
-        save_all=True,
-        append_images=other_pages,
-        resolution=TECHNICAL_SHEET_DPI if is_technical_sheet else 150,
-        quality=95,
-        subsampling=0,
-    )
-    return output.getvalue()
+    try:
+        first_page.save(
+            output,
+            format="PDF",
+            save_all=True,
+            append_images=other_pages,
+            resolution=TECHNICAL_SHEET_DPI if is_technical_sheet else 150,
+            quality=95,
+            subsampling=0,
+        )
+        check_export_size(output.tell())
+        return output.getvalue()
+    finally:
+        for page in pages:
+            page.close()
 
 
 def _build_photo_manifest_rows(products: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     for product in products:
+        check_export_budget()
         code = _stringify(product.get("Codigo"))
         name = _stringify(product.get("Nome"))
         for reference in _photo_references(product):
@@ -1280,8 +1322,8 @@ def _csv_from_rows(rows: Sequence[Dict[str, str]], columns: Sequence[str]) -> by
         delimiter=";",
         lineterminator="\r\n",
     )
-    writer.writeheader()
-    writer.writerows(rows)
+    writer.writerow({column: _spreadsheet_text(column) for column in columns})
+    writer.writerows({column: _spreadsheet_text(row.get(column, "")) for column in columns} for row in rows)
     return buffer.getvalue().encode("utf-8-sig")
 
 
@@ -1310,12 +1352,15 @@ def _build_zip_bytes(
         )
 
         for product in products:
+            check_export_budget()
             product_code = _stringify(product.get("Codigo")) or "sem-codigo"
             for index, reference in enumerate(_photo_references(product), start=1):
                 photo_label = reference["label"]
                 photo_url = reference["url"]
                 file_in_zip = ""
+                check_export_budget()
                 payload, extension = _resolve_photo_bytes(photo_url)
+                check_export_size(output.tell() + len(payload or b""))
                 if payload:
                     safe_label = _slugify(photo_label, fallback=f"imagem-{index}")
                     resolved_extension = extension or ".bin"
@@ -1337,6 +1382,7 @@ def _build_zip_bytes(
             _csv_from_rows(photo_manifest, ("Codigo", "Nome", "Foto", "URL", "ArquivoZip")),
         )
 
+    check_export_size(output.tell())
     return output.getvalue()
 
 
@@ -1358,7 +1404,14 @@ def _response_metadata(format_name: str, *, base_name: str) -> tuple[str, str]:
     raise ValueError("unsupported export format")
 
 
-def build_catalog_export(
+def build_catalog_export(**options) -> tuple[bytes, str, str]:
+    with export_budget():
+        result = _build_catalog_export(**options)
+        check_export_size(len(result[0]))
+        return result
+
+
+def _build_catalog_export(
     *,
     format_name: str,
     query: str = "",
@@ -1375,6 +1428,12 @@ def build_catalog_export(
         raise ValueError("no products available for the selected export")
     if normalized_format == "ficha" and not code:
         raise ValueError("technical sheet export requires a product code")
+
+    if normalized_format in {"pdf", "ficha", "zip"}:
+        default_limit = 20 if normalized_format == "zip" else 150
+        setting = "CATALOG_EXPORT_MAX_ZIP_PRODUCTS" if normalized_format == "zip" else "CATALOG_EXPORT_MAX_PDF_PRODUCTS"
+        if len(products) > positive_limit(setting, default_limit):
+            raise ExportLimitError("Há muitos produtos nesta exportação. Use os filtros para reduzir a seleção.")
 
     if normalized_format in {"pdf", "ficha"} and code:
         products = _enrich_products_with_export_photos(products)

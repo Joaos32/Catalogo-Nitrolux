@@ -1,5 +1,8 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useRepresentativeSession } from "./lib/use-representative-session";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useCatalogFilters } from "./lib/use-catalog-filters";
+import { rememberCatalogPosition, useCatalogNavigation } from "./lib/use-catalog-navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import ExportActions from "./components/ExportActions";
@@ -8,7 +11,6 @@ import ProductDetail from "./components/ProductDetail";
 import {
   ApiRequestError,
   downloadCatalogExport,
-  fetchRepresentativeSession,
   fetchImagesByCode,
   fetchPhotosByCodes,
   fetchProducts,
@@ -16,40 +18,19 @@ import {
 } from "./lib/catalog-api";
 import {
   DEMO_PRODUCTS,
+  deduplicateProducts,
   buildGalleryEntries,
   fallbackPhotos,
-  getRandomShowcaseProducts,
-  hasAnyPhoto,
   normalizeProduct,
   normalizeText,
 } from "./lib/catalog-products";
-import {
-  persistPhotosByCode,
-  persistUiState,
-  readPersistedPhotos,
-  readPersistedUiState,
-} from "./lib/catalog-storage";
-import type { CatalogBrand, CatalogExportFormat, CatalogProduct, ProductPhotos } from "./types";
+import { persistPhotosByCode, readPersistedPhotos } from "./lib/catalog-storage";
+import { mergePhotoSources, mergePhotosByCode, type PhotosByCode } from "./lib/catalog-photo-cache";
+import type { CatalogBrand, CatalogExportFormat, ProductPhotos } from "./types";
 
 type PhotosByProductId = Record<string, ProductPhotos>;
 const INITIAL_PRODUCTS_LIMIT = 15;
 const BRAND_ORDER: CatalogBrand[] = ["nitrolux", "pienza"];
-
-function mergePhotoSources(...sources: Array<ProductPhotos | null | undefined>): ProductPhotos | null {
-  const merged: ProductPhotos = {};
-  const fields: Array<keyof ProductPhotos> = ["white_background", "ambient", "measures"];
-
-  for (const source of sources) {
-    if (!source) continue;
-    for (const field of fields) {
-      if (!merged[field] && source[field]) {
-        merged[field] = source[field];
-      }
-    }
-  }
-
-  return hasAnyPhoto(merged) ? merged : null;
-}
 
 const BRAND_META: Record<
   CatalogBrand,
@@ -72,7 +53,7 @@ const BRAND_META: Record<
     pageClassName: "brand-theme-nitrolux",
     heroClassName: "",
     resultLabel: "linha Nitrolux",
-    exportTitle: "Exportar recorte Nitrolux",
+    exportTitle: "Baixar catálogo Nitrolux",
   },
   pienza: {
     tabLabel: "Pienza",
@@ -82,7 +63,7 @@ const BRAND_META: Record<
     pageClassName: "brand-theme-pienza",
     heroClassName: "hero-premium",
     resultLabel: "coleção Pienza",
-    exportTitle: "Exportar recorte Pienza",
+    exportTitle: "Baixar catálogo Pienza",
   },
 };
 function useCatalogProducts() {
@@ -121,43 +102,29 @@ export default function App(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { productId } = useParams<{ productId: string }>();
-  const initialUiState = useMemo(() => readPersistedUiState(), []);
+  const location = useLocation();
   const responsiveProductsBatch = useResponsiveProductsBatch();
 
-  const [query, setQuery] = useState(initialUiState.query);
-  const [category, setCategory] = useState(initialUiState.category);
-  const [brand, setBrand] = useState<CatalogBrand>(initialUiState.brand);
-  const [persistedPhotosByCode, setPersistedPhotosByCode] = useState(readPersistedPhotos);
+  const { query, category, brand, limit, update, loadMore } =
+    useCatalogFilters(responsiveProductsBatch);
+  const [knownPhotosByCode, setKnownPhotosByCode] = useState(readPersistedPhotos);
+  const [failedPhotoCodes, setFailedPhotoCodes] = useState<ReadonlySet<string>>(() => new Set());
+  const refreshFailedPhoto = (code: string) => {
+    setFailedPhotoCodes((previous) =>
+      previous.has(code) ? previous : new Set([...previous, code])
+    );
+  };
   const [isLoggingOutRepresentative, setIsLoggingOutRepresentative] = useState(false);
-  const [visibleProductCount, setVisibleProductCount] = useState(responsiveProductsBatch);
+  const [sessionError, setSessionError] = useState("");
 
   const productsQuery = useCatalogProducts();
-  const representativeSessionQuery = useQuery({
-    queryKey: ["representative-session"],
-    queryFn: fetchRepresentativeSession,
-    retry: false,
-    staleTime: 30_000,
-    // Mantem o JWT deslizante ativo enquanto o catalogo esta aberto.
-    refetchInterval: 2 * 60_000,
-    refetchIntervalInBackground: false,
-  });
+  const representativeSessionQuery = useRepresentativeSession();
 
   const products = useMemo(() => {
-    const source = productsQuery.data && productsQuery.data.length > 0 ? productsQuery.data : DEMO_PRODUCTS;
-    return source.map((item, index) => normalizeProduct(item, index));
+    const source =
+      productsQuery.data && productsQuery.data.length > 0 ? productsQuery.data : DEMO_PRODUCTS;
+    return deduplicateProducts(source).map((item, index) => normalizeProduct(item, index));
   }, [productsQuery.data]);
-
-  useEffect(() => {
-    const embeddedPhotos = Object.fromEntries(
-      products
-        .filter((item) => hasAnyPhoto(item.photos))
-        .map((item) => [item.code, item.photos])
-    );
-    if (Object.keys(embeddedPhotos).length === 0) return;
-
-    persistPhotosByCode(embeddedPhotos);
-    setPersistedPhotosByCode(readPersistedPhotos());
-  }, [products]);
 
   const selectedProduct = useMemo(() => {
     if (!productId) return null;
@@ -165,11 +132,11 @@ export default function App(): JSX.Element {
   }, [productId, products]);
 
   useEffect(() => {
-    if (!productId || productsQuery.isLoading) return;
+    if (!productId || !productsQuery.isSuccess) return;
     if (!selectedProduct) {
-      navigate("/", { replace: true });
+      navigate(`/${location.search}`, { replace: true });
     }
-  }, [navigate, productId, productsQuery.isLoading, selectedProduct]);
+  }, [navigate, productId, productsQuery.isSuccess, selectedProduct, location.search]);
 
   const galleryQuery = useQuery({
     queryKey: ["catalog-gallery", selectedProduct?.code || selectedProduct?.id || "none"],
@@ -182,17 +149,6 @@ export default function App(): JSX.Element {
       return payload && Array.isArray(payload.imagens) ? payload.imagens : [];
     },
   });
-
-  useEffect(() => {
-    persistUiState({ query, category, brand });
-  }, [brand, query, category]);
-
-  useEffect(() => {
-    if (!selectedProduct?.brand) return;
-    if (selectedProduct.brand !== brand) {
-      setBrand(selectedProduct.brand);
-    }
-  }, [brand, selectedProduct]);
 
   const activeBrand = selectedProduct?.brand || brand;
   const brandMeta = BRAND_META[activeBrand];
@@ -213,21 +169,35 @@ export default function App(): JSX.Element {
     return counts;
   }, [products]);
 
-  const brandProducts = useMemo(() => products.filter((item) => item.brand === brand), [brand, products]);
+  const brandProducts = useMemo(
+    () => products.filter((item) => item.brand === brand),
+    [brand, products]
+  );
 
   const categories = useMemo(() => {
-    const values = Array.from(new Set(brandProducts.map((item) => item.category).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b)
-    );
+    const values = Array.from(
+      new Set(brandProducts.map((item) => item.category).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     return ["Todas", ...values];
   }, [brandProducts]);
 
   useEffect(() => {
-    if (category === "Todas") return;
+    if (category === "Todas" || !productsQuery.isSuccess) return;
     if (!categories.includes(category)) {
-      setCategory("Todas");
+      update({ category: "Todas" }, true);
     }
-  }, [category, categories]);
+  }, [category, categories, productsQuery.isSuccess, update]);
+
+  const searchIndex = useMemo(
+    () =>
+      new Map(
+        products.map((item) => [
+          item.id,
+          normalizeText(`${item.name} ${item.code} ${item.description} ${item.category}`),
+        ])
+      ),
+    [products]
+  );
 
   const filteredProducts = useMemo(() => {
     const search = normalizeText(query);
@@ -235,41 +205,23 @@ export default function App(): JSX.Element {
     return products.filter((item) => {
       if (item.brand !== brand) return false;
       const categoryOk = category === "Todas" || item.category === category;
-      const textBlob = normalizeText(`${item.name} ${item.code} ${item.description} ${item.category}`);
+      const textBlob = searchIndex.get(item.id) || "";
       const queryOk = !search || textBlob.includes(search);
       return categoryOk && queryOk;
     });
-  }, [brand, category, products, query]);
+  }, [brand, category, products, query, searchIndex]);
 
-  const isHomeShowcase = category === "Todas" && normalizeText(query) === "";
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, limit),
+    [filteredProducts, limit]
+  );
+  useCatalogNavigation(productId, productsQuery.isSuccess, location.search);
 
   useEffect(() => {
-    setVisibleProductCount(responsiveProductsBatch);
-  }, [brand, category, query, responsiveProductsBatch]);
-
-  const visibleProducts = useMemo(() => {
-    if (isHomeShowcase) {
-      return getRandomShowcaseProducts(filteredProducts, INITIAL_PRODUCTS_LIMIT);
-    }
-    return filteredProducts.slice(0, visibleProductCount);
-  }, [filteredProducts, isHomeShowcase, visibleProductCount]);
-
-  const embeddedPhotosByProductId = useMemo(() => {
-    const entries = new Map<string, ProductPhotos>();
-    for (const item of visibleProducts) {
-      const photos = mergePhotoSources(item.photos, persistedPhotosByCode[item.code]);
-      if (photos) {
-        entries.set(item.id, photos);
-      }
-    }
-    if (selectedProduct) {
-      const photos = mergePhotoSources(selectedProduct.photos, persistedPhotosByCode[selectedProduct.code]);
-      if (photos) {
-        entries.set(selectedProduct.id, photos);
-      }
-    }
-    return Object.fromEntries(entries) as PhotosByProductId;
-  }, [persistedPhotosByCode, selectedProduct, visibleProducts]);
+    document.title = selectedProduct
+      ? `${selectedProduct.name} | ${brandMeta.tabLabel}`
+      : `Catálogo ${brandMeta.tabLabel}`;
+  }, [brandMeta.tabLabel, selectedProduct]);
 
   const photoTargets = useMemo(() => {
     if (productId && !galleryQuery.isError) {
@@ -277,26 +229,37 @@ export default function App(): JSX.Element {
     }
 
     const targets = visibleProducts.filter(
-      (item) => !mergePhotoSources(item.photos, persistedPhotosByCode[item.code])
+      (item) =>
+        failedPhotoCodes.has(item.code) ||
+        !mergePhotoSources(item.photos, knownPhotosByCode[item.code])
     );
     if (
       selectedProduct &&
-      !mergePhotoSources(selectedProduct.photos, persistedPhotosByCode[selectedProduct.code]) &&
+      (failedPhotoCodes.has(selectedProduct.code) ||
+        !mergePhotoSources(selectedProduct.photos, knownPhotosByCode[selectedProduct.code])) &&
       !targets.some((item) => item.id === selectedProduct.id)
     ) {
       targets.push(selectedProduct);
     }
     return targets;
-  }, [galleryQuery.isError, persistedPhotosByCode, productId, selectedProduct, visibleProducts]);
+  }, [
+    failedPhotoCodes,
+    galleryQuery.isError,
+    knownPhotosByCode,
+    productId,
+    selectedProduct,
+    visibleProducts,
+  ]);
 
   const photoQueryKey = useMemo(
-    () => [
-      "catalog-photos",
-      photoTargets
-        .map((item) => item.code || item.id)
-        .join("|")
-        .toLowerCase(),
-    ] as const,
+    () =>
+      [
+        "catalog-photos",
+        photoTargets
+          .map((item) => item.code || item.id)
+          .join("|")
+          .toLowerCase(),
+      ] as const,
     [photoTargets]
   );
 
@@ -304,74 +267,55 @@ export default function App(): JSX.Element {
     queryKey: photoQueryKey,
     enabled: photoTargets.length > 0,
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<PhotosByProductId> => {
-      const previousPhotos =
-        queryClient.getQueryData<PhotosByProductId>(photoQueryKey) || {};
-      const remoteCodes = photoTargets
-        .filter((product) => !hasAnyPhoto(product.photos))
-        .map((product) => product.code || product.id);
+    queryFn: async (): Promise<PhotosByCode> => {
+      const previousPhotos = queryClient.getQueryData<PhotosByCode>(photoQueryKey) || {};
+      const remoteCodes = photoTargets.map((product) => product.code || product.id);
       // Uma falha de rede deve manter os dados anteriores no React Query.
       // Nao transforme indisponibilidade temporaria em placeholders.
       const remotePhotos = await fetchPhotosByCodes(remoteCodes);
       const entries = photoTargets.map((product) => {
-        if (hasAnyPhoto(product.photos)) {
-          return [product.id, product.photos] as const;
-        }
-
         const code = product.code || product.id;
         const payload = remotePhotos[code] || null;
-        const previous = previousPhotos[product.id] || persistedPhotosByCode[code] || null;
-        const normalized =
-          mergePhotoSources(payload, previous) || fallbackPhotos(code);
-        return [product.id, normalized] as const;
+        const previous = mergePhotoSources(
+          previousPhotos[code],
+          knownPhotosByCode[code],
+          product.photos
+        );
+        const normalized = mergePhotoSources(payload, previous) || fallbackPhotos(code);
+        return [code, normalized] as const;
       });
 
-      return Object.fromEntries(entries) as PhotosByProductId;
+      return Object.fromEntries(entries) as PhotosByCode;
     },
   });
 
   useEffect(() => {
     if (!photosQuery.data) return;
 
-    // React Query is only in memory. Save real photo URLs so the two catalog
-    // brands can render them immediately after a full page reload.
-    persistPhotosByCode(
-      Object.fromEntries(
-        Object.entries(photosQuery.data).map(([productId, photos]) => {
-          const product = products.find((item) => item.id === productId);
-          return [product?.code || productId, photos];
-        })
-      )
-    );
-    setPersistedPhotosByCode(readPersistedPhotos());
-  }, [photosQuery.data, products]);
+    const received = photosQuery.data;
+    persistPhotosByCode(received);
+    // The session cache is independent of localStorage and the changing batch key.
+    setKnownPhotosByCode((current) => mergePhotosByCode(current, received));
+    setFailedPhotoCodes((current) => {
+      const remaining = [...current].filter((code) => !(code in received));
+      return remaining.length === current.size ? current : new Set(remaining);
+    });
+  }, [photosQuery.data]);
 
-  const photosByProductId = useMemo(
-    () => ({ ...embeddedPhotosByProductId, ...(photosQuery.data || {}) }),
-    [embeddedPhotosByProductId, photosQuery.data]
-  );
-  const selectedPhotos = selectedProduct ? photosByProductId[selectedProduct.id] || null : null;
-
-  const productsByCategory = useMemo(() => {
-    const groups = new Map<string, CatalogProduct[]>();
-    for (const item of visibleProducts) {
-      const group = item.category || "Sem categoria";
-      const list = groups.get(group) || [];
-      list.push(item);
-      groups.set(group, list);
+  const photosByProductId = useMemo(() => {
+    const entries: PhotosByProductId = {};
+    const displayed = selectedProduct ? [...visibleProducts, selectedProduct] : visibleProducts;
+    for (const item of displayed) {
+      const photos = mergePhotoSources(
+        photosQuery.data?.[item.code],
+        knownPhotosByCode[item.code],
+        item.photos
+      );
+      if (photos) entries[item.id] = photos;
     }
-    return Array.from(groups.entries()).sort(([left], [right]) => left.localeCompare(right));
-  }, [visibleProducts]);
-  const visibleCategoryCount = productsByCategory.length;
-  const showGroupedCatalog = category === "Todas" && !isHomeShowcase;
-  const showcaseCategories = useMemo(
-    () =>
-      productsByCategory.map(([groupName, groupProducts]) => ({
-        name: groupName,
-        count: groupProducts.length,
-      })),
-    [productsByCategory]
-  );
+    return entries;
+  }, [knownPhotosByCode, photosQuery.data, selectedProduct, visibleProducts]);
+  const selectedPhotos = selectedProduct ? photosByProductId[selectedProduct.id] || null : null;
 
   const selectedGalleryEntries = useMemo(() => {
     if (!selectedProduct) return [];
@@ -380,38 +324,33 @@ export default function App(): JSX.Element {
 
   const loading = productsQuery.isLoading;
   const loadingPhotos = photosQuery.isFetching;
-  const loadedPhotoCount = Object.keys(photosByProductId).length;
   const hiddenProductsCount = Math.max(filteredProducts.length - visibleProducts.length, 0);
-  const canLoadMoreProducts = !isHomeShowcase && hiddenProductsCount > 0;
+  const canLoadMoreProducts = hiddenProductsCount > 0;
   const representativeName =
     representativeSessionQuery.data?.user?.name ||
     representativeSessionQuery.data?.user?.email ||
     "Representante";
 
   const productsError = productsQuery.isError ? "Não foi possível carregar os produtos agora." : "";
-  const emptyError = !loading && !productsError && brandProducts.length === 0 ? "Nenhum produto cadastrado." : "";
-
-  const openProduct = (item: CatalogProduct) => {
-    navigate(`/produto/${item.routeId}`);
-  };
-
-  const closeDetail = () => {
-    navigate("/");
-  };
+  const emptyError =
+    !loading && !productsError && brandProducts.length === 0 ? "Nenhum produto cadastrado." : "";
 
   const handleRepresentativeLogout = async () => {
     setIsLoggingOutRepresentative(true);
+    setSessionError("");
     try {
       await logoutRepresentative();
       await queryClient.invalidateQueries({ queryKey: ["representative-session"] });
       navigate("/login", { replace: true });
+    } catch {
+      setSessionError("Não foi possível sair. Tente novamente.");
     } finally {
       setIsLoggingOutRepresentative(false);
     }
   };
 
   const exportCatalog = (format: CatalogExportFormat) => {
-    void downloadCatalogExport({
+    return downloadCatalogExport({
       format,
       query,
       category: category === "Todas" ? "" : category,
@@ -419,26 +358,27 @@ export default function App(): JSX.Element {
     });
   };
 
-  const exportSelectedProduct = (format: CatalogExportFormat) => {
+  const exportSelectedProduct = async (format: CatalogExportFormat) => {
     if (!selectedProduct) return;
-    void downloadCatalogExport({
+    await downloadCatalogExport({
       format,
       code: selectedProduct.code,
     });
   };
 
-  const loadMoreProducts = () => {
-    setVisibleProductCount((current) => Math.min(current + responsiveProductsBatch, filteredProducts.length));
-  };
-
   return (
-    <div className={`page-shell ${brandMeta.pageClassName}`}>
+    <div className={`page-shell catalog-page ${brandMeta.pageClassName}`}>
+      <a className="skip-link" href="#catalog-content">
+        Pular para os produtos
+      </a>
       <div className="bg-orb orb-a" aria-hidden="true"></div>
       <div className="bg-orb orb-b" aria-hidden="true"></div>
 
       <header className={`hero ${brandMeta.heroClassName}`.trim()}>
         <div className="hero-identity">
-          <h1 className="sr-only">Catálogo de produtos {brandMeta.tabLabel}</h1>
+          <h1 className="sr-only">
+            {selectedProduct?.name || `Catálogo de produtos ${brandMeta.tabLabel}`}
+          </h1>
           <div className="hero-kicker">{brandMeta.kicker}</div>
           <div className="hero-brand" aria-label={`Marca ${brandMeta.tabLabel}`}>
             <p className="hero-brand-name">{brandMeta.title}</p>
@@ -448,13 +388,23 @@ export default function App(): JSX.Element {
             {representativeSessionQuery.data?.authenticated && (
               <span className="hero-session-pill">Acesso liberado para {representativeName}</span>
             )}
-            <button type="button" className="hero-link-button" onClick={() => navigate("/erp")}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+            <Link className="hero-link-button" to="/erp">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
               </svg>
               Painel admin
-            </button>
+            </Link>
             {representativeSessionQuery.data?.authenticated && (
               <button
                 type="button"
@@ -469,51 +419,71 @@ export default function App(): JSX.Element {
         </div>
       </header>
 
-      <main className="content-wrap" aria-busy={loading || loadingPhotos}>
+      <main id="catalog-content" tabIndex={-1} className="content-wrap" aria-busy={loading}>
+        {sessionError && (
+          <div className="banner banner-warning" role="alert">
+            {sessionError}
+          </div>
+        )}
         {selectedProduct ? (
-          <ProductDetail
-            item={selectedProduct}
-            photos={selectedPhotos}
-            galleryEntries={selectedGalleryEntries}
-            onBack={closeDetail}
-            onExport={exportSelectedProduct}
-          />
+          <>
+            {galleryQuery.isFetching && <p role="status">Carregando fotos…</p>}
+            {galleryQuery.isError && (
+              <div className="banner banner-warning" role="alert">
+                Não foi possível carregar todas as fotos.{" "}
+                <button
+                  className="hero-link-button"
+                  type="button"
+                  onClick={() => void galleryQuery.refetch()}
+                >
+                  Tentar novamente
+                </button>
+              </div>
+            )}
+            <ProductDetail
+              item={selectedProduct}
+              photos={selectedPhotos}
+              galleryEntries={selectedGalleryEntries}
+              backTo={`/${location.search}`}
+              onExport={exportSelectedProduct}
+            />
+          </>
         ) : (
           <>
             <section className="brand-tabs" aria-label="Selecionar linha da marca">
-              {BRAND_ORDER.map((value) => {
-                const meta = BRAND_META[value];
-                const isActive = brand === value;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`brand-tab ${isActive ? "is-active" : ""} ${value === "pienza" ? "is-premium" : ""}`}
-                    onClick={() => setBrand(value)}
-                    aria-pressed={isActive}
-                    aria-current={isActive ? "true" : undefined}
-                  >
-                    <span className="brand-tab-title">{meta.tabLabel}</span>
-                    <span className="brand-tab-copy">{brandCounts[value]} produtos</span>
-                  </button>
-                );
-              })}
+              {BRAND_ORDER.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`brand-tab ${brand === value ? "is-active" : ""} ${value === "pienza" ? "is-premium" : ""}`}
+                  onClick={() => update({ brand: value, category: "Todas" })}
+                  aria-pressed={brand === value}
+                >
+                  <span className="brand-tab-title">{BRAND_META[value].tabLabel}</span>
+                  <span className="brand-tab-copy">{brandCounts[value]} produtos</span>
+                </button>
+              ))}
             </section>
-
             <section className="toolbar" aria-label="Filtros do catálogo">
               <label className="field search-field">
                 <span>Buscar produto</span>
                 <input
                   type="search"
+                  name="q"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Nome, código ou categoria"
+                  onChange={(event) => update({ q: event.target.value }, true)}
+                  placeholder="Nome, código ou categoria…"
                 />
               </label>
-
               <label className="field filter-field">
                 <span>Categoria</span>
-                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <select
+                  name="category"
+                  value={category}
+                  onChange={(event) => update({ category: event.target.value })}
+                >
                   {categories.map((value) => (
                     <option key={value} value={value}>
                       {value}
@@ -522,28 +492,21 @@ export default function App(): JSX.Element {
                 </select>
               </label>
             </section>
-
-            <ExportActions
-              title={brandMeta.exportTitle}
-              note={
-                isHomeShowcase
-                  ? `${visibleProducts.length} produtos sorteados e ${filteredProducts.length} na ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
-                  : `${visibleProducts.length} itens exibidos agora e ${filteredProducts.length} no recorte atual da ${brandMeta.resultLabel}, com dados e fotos conforme o formato.`
-              }
-              onExport={exportCatalog}
-              disabled={loading || filteredProducts.length === 0}
-            />
-
-            <p className="result-summary" role="status" aria-live="polite">
-              {loading
-                ? "Carregando produtos..."
-                : hiddenProductsCount > 0
-                  ? isHomeShowcase
-                    ? `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo ${visibleProducts.length} produtos sorteados`
-                    : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}, exibindo ${visibleProducts.length} na grade inicial`
-                  : `${filteredProducts.length} itens encontrados na ${brandMeta.resultLabel}`}
-            </p>
-
+            <div className="catalog-summary">
+              <p className="result-summary" role="status" aria-live="polite">
+                {loading
+                  ? "Carregando produtos…"
+                  : `${visibleProducts.length} de ${filteredProducts.length} produtos`}
+                {loadingPhotos ? " · Carregando fotos…" : ""}
+              </p>
+              <ExportActions
+                title={brandMeta.exportTitle}
+                note={`${filteredProducts.length} produtos da seleção atual. Os filtros também se aplicam ao download.`}
+                onExport={exportCatalog}
+                disabled={loading || Boolean(productsError) || filteredProducts.length === 0}
+                collapsible
+              />
+            </div>
             {productsError && (
               <div className="banner banner-warning" role="alert">
                 {productsError}{" "}
@@ -553,98 +516,73 @@ export default function App(): JSX.Element {
                   onClick={() => void productsQuery.refetch()}
                   disabled={productsQuery.isFetching}
                 >
-                  {productsQuery.isFetching ? "Tentando novamente..." : "Tentar novamente"}
+                  {productsQuery.isFetching ? "Tentando novamente…" : "Tentar novamente"}
                 </button>
               </div>
             )}
-            {emptyError && <div className="banner banner-warning">{emptyError}</div>}
-            {!productsError && !emptyError && loadingPhotos && (
-              <div className="banner banner-info">Carregando fotos dos produtos...</div>
+            {photosQuery.isError && (
+              <div className="banner banner-warning" role="alert">
+                Algumas fotos não puderam ser carregadas.{" "}
+                <button
+                  type="button"
+                  className="hero-link-button"
+                  onClick={() => void photosQuery.refetch()}
+                  disabled={photosQuery.isFetching}
+                >
+                  Tentar novamente
+                </button>
+              </div>
             )}
-
-            <section className="stats-grid" aria-label="Resumo">
-              <article className="stat-card">
-                <strong>{visibleProducts.length}</strong>
-                <span>
-                  {isHomeShowcase ? "Produtos na roleta" : "Itens exibidos"}
-                </span>
-              </article>
-              <article className="stat-card">
-                <strong>{visibleCategoryCount}</strong>
-                <span>
-                  {isHomeShowcase ? "Categorias sorteadas" : "Categorias no recorte"}
-                </span>
-              </article>
-              <article className="stat-card">
-                <strong>{loadedPhotoCount}</strong>
-                <span>{isHomeShowcase ? "Galerias na roleta" : "Galerias prontas"}</span>
-              </article>
-            </section>
-
+            <h2 className="sr-only">Produtos {brandMeta.tabLabel}</h2>
             {loading ? (
-              <section className="loading-state" role="status" aria-live="polite">
-                Carregando lista de produtos...
+              <section className="loading-state" role="status">
+                Carregando lista de produtos…
               </section>
             ) : visibleProducts.length > 0 ? (
               <>
-                {isHomeShowcase && (
-                  <section
-                    className="showcase-category-strip"
-                    aria-label="Categorias dos produtos sorteados"
-                  >
-                    {showcaseCategories.map((entry) => (
-                      <span key={`${entry.name}-${entry.count}`} className="showcase-category-pill">
-                        {entry.name} ({entry.count})
-                      </span>
-                    ))}
-                  </section>
-                )}
-                {showGroupedCatalog ? (
-                  <section className="catalog-groups">
-                    {productsByCategory.map(([groupName, groupProducts]) => (
-                      <section key={groupName} className="category-group">
-                        <h2 className="category-title">{groupName}</h2>
-                        <div className="catalog-grid">
-                          {groupProducts.map((item, index) => (
-                            <ProductCard
-                              key={`${item.routeId}-${item.id}`}
-                              item={item}
-                              photos={photosByProductId[item.id]}
-                              index={index}
-                              onOpen={() => openProduct(item)}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </section>
-                ) : (
-                  <section className="catalog-grid catalog-grid-flat">
-                    {visibleProducts.map((item, index) => (
-                      <ProductCard
-                        key={`${item.routeId}-${item.id}`}
-                        item={item}
-                        photos={photosByProductId[item.id]}
-                        index={index}
-                        onOpen={() => openProduct(item)}
-                      />
-                    ))}
-                  </section>
-                )}
+                <section className="catalog-grid catalog-grid-flat" aria-label="Lista de produtos">
+                  {visibleProducts.map((item, index) => (
+                    <ProductCard
+                      key={item.routeId}
+                      item={item}
+                      photos={photosByProductId[item.id]}
+                      index={index}
+                      href={`/produto/${item.routeId}${location.search}`}
+                      onOpen={() => rememberCatalogPosition(location.search, item.routeId)}
+                      onPhotoError={() => refreshFailedPhoto(item.code)}
+                    />
+                  ))}
+                </section>
                 {canLoadMoreProducts && (
                   <div className="load-more-panel">
-                    <button type="button" className="load-more-button" onClick={loadMoreProducts}>
-                      Carregar mais {Math.min(responsiveProductsBatch, hiddenProductsCount)} produtos
+                    <button
+                      type="button"
+                      className="load-more-button"
+                      onClick={() => loadMore(filteredProducts.length)}
+                    >
+                      Carregar mais {Math.min(responsiveProductsBatch, hiddenProductsCount)}{" "}
+                      produtos
                     </button>
-                    <span>{hiddenProductsCount} ainda no recorte atual</span>
+                    <span>{hiddenProductsCount} produtos restantes</span>
                   </div>
                 )}
               </>
             ) : (
-              <section className="empty-state">
-                <h2>Nenhum item encontrado</h2>
-                <p>Ajuste a busca ou selecione outra categoria.</p>
-              </section>
+              !productsError && (
+                <section className="empty-state">
+                  <h2>{emptyError || "Nenhum item encontrado"}</h2>
+                  <p>Ajuste a busca ou selecione outra categoria.</p>
+                  {(query || category !== "Todas") && (
+                    <button
+                      className="export-button"
+                      type="button"
+                      onClick={() => update({ q: "", category: "Todas" })}
+                    >
+                      Limpar filtros
+                    </button>
+                  )}
+                </section>
+              )
             )}
           </>
         )}

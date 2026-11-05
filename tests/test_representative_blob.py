@@ -2,6 +2,8 @@ import json
 from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
+
 from fastapi.testclient import TestClient
 from vercel.blob import BlobNotFoundError
 from botocore.exceptions import ClientError
@@ -19,7 +21,7 @@ def test_representative_registry_persists_in_private_s3(monkeypatch):
             assert Key == "private/representative_users.json"
             if stored_payload is None:
                 raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-            return {"Body": BytesIO(stored_payload)}
+            return {"Body": BytesIO(stored_payload), "ETag": "test"}
 
         def put_object(self, *, Bucket, Key, Body, **kwargs):
             nonlocal stored_payload
@@ -43,7 +45,7 @@ def test_representative_registry_persists_in_private_s3(monkeypatch):
     assert [user["email"] for user in users] == ["persist@example.com"]
 
 
-def test_environment_login_survives_temporary_blob_failure(monkeypatch):
+def test_environment_login_is_denied_during_temporary_blob_failure(monkeypatch):
     monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", "blob-token")
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", "fallback@example.com")
     monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_PASSWORD", "fallback-password")
@@ -51,15 +53,22 @@ def test_environment_login_survives_temporary_blob_failure(monkeypatch):
     monkeypatch.setattr(
         representative_registry,
         "_load_blob_payload",
-        lambda: (_ for _ in ()).throw(PermissionError("blob suspended")),
+        lambda **_: (_ for _ in ()).throw(PermissionError("blob suspended")),
     )
 
     users = representative_registry.list_representative_login_users()
 
-    assert [user["email"] for user in users] == ["fallback@example.com"]
+    assert users == []
 
 
-def test_representative_registry_uses_private_vercel_blob(monkeypatch):
+@pytest.mark.parametrize("explicit_blob", [False, True])
+def test_representative_registry_uses_private_vercel_blob(monkeypatch, explicit_blob):
+    if explicit_blob:
+        monkeypatch.setenv("CATALOG_STATE_BACKEND", "blob")
+        monkeypatch.setenv("CATALOG_STATE_DATABASE_URL", "postgresql://unused-local-database")
+        monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_BUCKET", "unused-bucket")
+        monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_ACCESS_KEY_ID", "unused-access-key")
+        monkeypatch.setenv("CATALOG_REPRESENTATIVE_S3_SECRET_ACCESS_KEY", "unused-secret-key")
     stored_payload: bytes | None = None
 
     def fake_get(path, *, access, token, use_cache):
@@ -69,33 +78,20 @@ def test_representative_registry_uses_private_vercel_blob(monkeypatch):
         assert use_cache is False
         if stored_payload is None:
             raise BlobNotFoundError()
-        return SimpleNamespace(content=stored_payload)
+        return SimpleNamespace(content=stored_payload, etag="version-1")
 
-    def fake_put(
-        path,
-        body,
-        *,
-        access,
-        content_type,
-        add_random_suffix,
-        overwrite,
-        cache_control_max_age,
-        token,
-    ):
+    def fake_put(path, body, *, token, expected_etag, expected_missing):
         nonlocal stored_payload
         assert path == "catalogo/representative_users.json"
-        assert access == "private"
-        assert content_type.startswith("application/json")
-        assert add_random_suffix is False
-        assert overwrite is True
-        assert cache_control_max_age == 0
         assert token == "blob-test-token"
+        assert expected_missing is (stored_payload is None)
+        assert expected_etag is None if expected_missing else expected_etag == "version-1"
         stored_payload = body
-        return SimpleNamespace(pathname=path)
+        return "version-1"
 
     monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", "blob-test-token")
     monkeypatch.setattr("vercel.blob.get", fake_get)
-    monkeypatch.setattr("vercel.blob.put", fake_put)
+    monkeypatch.setattr("catalog.representative_registry.put_versioned", fake_put)
 
     client = TestClient(create_app())
     created = client.put(
@@ -121,3 +117,25 @@ def test_representative_registry_uses_private_vercel_blob(monkeypatch):
     )
     assert login.status_code == 200
     assert login.json()["authenticated"] is True
+
+
+def test_blocked_blob_reports_login_outage_instead_of_bad_password(monkeypatch):
+    monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", "blocked-test-token")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_EMAIL", "fallback@example.com")
+    monkeypatch.setenv("CATALOG_REPRESENTATIVE_LOGIN_PASSWORD", "fallback-password")
+    monkeypatch.setattr(
+        representative_registry, "_load_blob_payload",
+        lambda **_: (_ for _ in ()).throw(PermissionError("store blocked")),
+    )
+    client = TestClient(create_app())
+    unavailable = client.post(
+        "/auth/representative/login", json={"email": "managed@example.com", "password": "current-password"},
+    )
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"] == "Representative storage is temporarily unavailable"
+
+    contingency = client.post(
+        "/auth/representative/login", json={"email": "fallback@example.com", "password": "fallback-password"},
+    )
+    assert contingency.status_code == 503
+    assert client.get("/auth/representative/session").json()["authenticated"] is False

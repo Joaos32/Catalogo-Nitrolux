@@ -519,46 +519,7 @@ body.body-theme-pienza::after {
   background: #eef5ff;
   color: #2055a6;
 }
-.stats-grid {
-  margin-bottom: 16px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-.stat-card {
-  display: block;
-  width: auto;
-  margin: 0;
-  padding: 18px 20px;
-  border-radius: 18px;
-  border: 1px solid rgba(40, 90, 165, 0.1);
-  background: #ffffff;
-  box-shadow: var(--shadow-card);
-  transition: transform var(--transition), box-shadow var(--transition);
-}
-.stat-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 28px rgba(25, 67, 130, 0.1);
-}
-.stat-card strong {
-  display: block;
-  font-family: "Sora", "Manrope", sans-serif;
-  font-size: 36px;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  background: linear-gradient(160deg, #6a9ed4 0%, #2a5aaa 40%, #1a3e80 70%, #3a70bc 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  margin-bottom: 4px;
-}
-.stat-card span {
-  color: var(--ink-500);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
+
 .catalog-grid {
   display: grid !important;
   grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
@@ -1022,8 +983,6 @@ body.body-theme-pienza::after {
   opacity: 0;
 }
 .brand-theme-pienza .hero {
-  min-height: 148px;
-  padding: 22px 28px 20px;
   border: 1px solid rgba(190, 130, 60, 0.22);
   border-radius: 22px;
   background:
@@ -1071,12 +1030,6 @@ body.body-theme-pienza::after {
   display: block;
 }
 .brand-theme-pienza .hero-identity {
-  width: auto;
-  min-height: 0;
-  margin: 0 auto;
-  padding: 0;
-  gap: 14px;
-  justify-content: center;
   z-index: 2;
 }
 .brand-theme-pienza .hero-identity::before {
@@ -1092,9 +1045,6 @@ body.body-theme-pienza::after {
   box-shadow: 0 4px 12px rgba(150, 90, 30, 0.1);
 }
 .brand-theme-pienza .hero-brand-name {
-  font-size: clamp(38px, 5.2vw, 64px);
-  line-height: 0.92;
-  letter-spacing: 0.08em;
   background: linear-gradient(180deg, #c08535 0%, #9a6218 40%, #7a4a10 100%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -1103,15 +1053,7 @@ body.body-theme-pienza::after {
   text-shadow: none;
 }
 .brand-theme-pienza .hero-brand-subtitle {
-  margin: 2px 0 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: none;
   color: #6a4010;
-  font-size: clamp(13px, 1.4vw, 18px);
-  line-height: 1.2;
-  letter-spacing: 0.02em;
   font-weight: 700;
   text-transform: none;
   text-shadow: none;
@@ -1122,9 +1064,7 @@ body.body-theme-pienza::after {
   width: 34px;
   background: linear-gradient(90deg, rgba(180, 120, 48, 0), rgba(180, 120, 48, 0.7), rgba(180, 120, 48, 0));
 }
-.brand-theme-pienza .hero-admin-actions {
-  justify-content: center;
-}
+
 .brand-theme-pienza .content-wrap {
   margin-top: 14px;
   position: relative;
@@ -1176,7 +1116,6 @@ body.body-theme-pienza::after {
 }
 .brand-theme-pienza .toolbar,
 .brand-theme-pienza .export-panel,
-.brand-theme-pienza .stat-card,
 .brand-theme-pienza .product-card,
 .brand-theme-pienza .detail-panel,
 .brand-theme-pienza .detail-meta,
@@ -1228,14 +1167,12 @@ body.body-theme-pienza::after {
   box-shadow: 0 0 0 3px rgba(180, 120, 48, 0.12);
 }
 .brand-theme-pienza .export-copy strong,
-.brand-theme-pienza .stat-card strong,
 .brand-theme-pienza .card-body h3,
 .brand-theme-pienza .detail-meta h2,
 .brand-theme-pienza .detail-gallery-copy strong,
 .brand-theme-pienza .empty-state h2 {
   color: #1e0c04;
 }
-.brand-theme-pienza .stat-card span,
 .brand-theme-pienza .detail-attribute-item dd,
 .brand-theme-pienza .result-summary {
   color: var(--pienza-copy-soft);
@@ -1279,25 +1216,13 @@ body.body-theme-pienza::after {
   border-color: rgba(239, 193, 118, 0.28);
   color: #faecd0;
 }
-.brand-theme-pienza .showcase-category-pill,
 .brand-theme-pienza .detail-tag {
   border-color: rgba(190, 130, 60, 0.28);
   background: rgba(255, 255, 255, 0.92);
   color: #7a4e18;
   box-shadow: var(--shadow-card);
 }
-.brand-theme-pienza .category-title {
-  color: #1e0c04;
-  border-bottom-color: rgba(190, 130, 60, 0.2);
-}
-.brand-theme-pienza .category-title::before {
-  background: rgba(180, 120, 48, 0.8);
-}
-.brand-theme-pienza .showcase-category-pill {
-  padding: 9px 13px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
+
 .brand-theme-pienza .chip {
   border-color: rgba(255, 255, 255, 0.1);
   font-size: 10px;
@@ -1486,30 +1411,19 @@ body.body-theme-pienza::after {
 }
 .brand-theme-nitrolux .hero,
 .brand-theme-pienza .hero {
-  min-height: 88px;
-  padding: 12px 18px;
   border-radius: 16px;
 }
-.brand-theme-nitrolux .hero-identity,
-.brand-theme-pienza .hero-identity {
-  gap: 6px;
-}
+
 .brand-theme-nitrolux .hero-kicker,
 .brand-theme-pienza .hero-kicker {
   padding: 4px 9px;
   font-size: 9px;
   letter-spacing: 0.14em;
 }
-.brand-theme-nitrolux .hero-brand-name,
-.brand-theme-pienza .hero-brand-name {
-  font-size: clamp(28px, 3.6vw, 42px);
-  line-height: 0.94;
-}
+
 .brand-theme-nitrolux .hero-brand-subtitle,
 .brand-theme-pienza .hero-brand-subtitle {
   margin-top: 0;
-  font-size: clamp(11px, 1.1vw, 14px);
-  line-height: 1.15;
 }
 .brand-theme-nitrolux .hero-brand-subtitle::before,
 .brand-theme-nitrolux .hero-brand-subtitle::after,
@@ -1517,17 +1431,7 @@ body.body-theme-pienza::after {
 .brand-theme-pienza .hero-brand-subtitle::after {
   width: 20px;
 }
-.brand-theme-nitrolux .hero-admin-actions,
-.brand-theme-pienza .hero-admin-actions {
-  gap: 6px;
-}
-.brand-theme-nitrolux .hero-link-button,
-.brand-theme-pienza .hero-link-button,
-.brand-theme-nitrolux .hero-session-pill,
-.brand-theme-pienza .hero-session-pill {
-  padding: 6px 10px;
-  font-size: 11px;
-}
+
 .auth-page-shell .content-wrap {
   margin-top: 22px;
 }
@@ -1629,7 +1533,7 @@ body.body-theme-pienza::after {
   top: 10px;
   z-index: 8;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   padding: 6px;
   border-radius: 16px;
@@ -1671,6 +1575,48 @@ body.body-theme-pienza::after {
   opacity: 0.78;
   font-size: 12px;
   line-height: 1.25;
+}
+.admin-online-panel {
+  align-content: start;
+}
+.admin-online-user-list {
+  display: grid;
+  gap: 8px;
+}
+.admin-online-user-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(26, 92, 190, 0.12);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+.admin-online-user-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #20a46b;
+  box-shadow: 0 0 0 4px rgba(32, 164, 107, 0.12);
+}
+.admin-online-user-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.admin-online-user-copy strong {
+  color: var(--ink-900);
+  font-size: 14px;
+}
+.admin-online-user-copy span,
+.admin-online-user-row small {
+  color: var(--ink-500);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.admin-online-user-row small {
+  text-align: right;
 }
 .admin-panel {
   border-radius: 16px;
@@ -1735,15 +1681,7 @@ body.body-theme-pienza::after {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 10px;
 }
-.admin-stats-grid .stat-card {
-  min-width: 0;
-}
-.admin-stats-grid .stat-card strong {
-  font-size: clamp(24px, 2.7vw, 32px);
-  line-height: 1.12;
-  overflow-wrap: anywhere;
-  word-break: normal;
-}
+
 .admin-status-box {
   padding: 14px;
   border-radius: 12px;
@@ -2015,15 +1953,7 @@ body.body-theme-pienza::after {
   .page-shell.brand-theme-pienza::after {
     width: clamp(64px, 9vw, 110px);
   }
-  .brand-theme-pienza .hero {
-    min-height: 142px;
-    padding: 20px 24px;
-  }
-  .brand-theme-pienza .hero-identity {
-    width: auto;
-    min-height: 0;
-    padding: 0;
-  }
+
   .product-card {
     width: auto;
   }
@@ -2090,24 +2020,10 @@ body.body-theme-pienza::after {
   .page-shell.brand-theme-pienza::after {
     width: 40px;
   }
-  .brand-theme-pienza .hero {
-    min-height: 118px;
-    padding: 18px 14px 16px;
-    border-radius: 20px;
-  }
-  .brand-theme-pienza .hero-identity {
-    width: auto;
-    min-height: 0;
-    padding: 0;
-    gap: 10px;
-  }
-  .brand-theme-pienza .hero-brand-name {
-    font-size: clamp(30px, 9vw, 44px);
-  }
-  .brand-theme-pienza .hero-brand-subtitle {
-    font-size: clamp(11px, 3.4vw, 15px);
-    gap: 8px;
-  }
+.brand-theme-pienza .hero {
+  border-radius: 20px;
+}
+
   .brand-theme-pienza .hero-brand-subtitle::before,
   .brand-theme-pienza .hero-brand-subtitle::after {
     width: 22px;
@@ -2154,6 +2070,13 @@ body.body-theme-pienza::after {
   }
   .admin-panel-head {
     flex-direction: column;
+  }
+  .admin-online-user-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .admin-online-user-row small {
+    grid-column: 2;
+    text-align: left;
   }
   .admin-file-card {
     grid-template-columns: 1fr;
@@ -2211,92 +2134,13 @@ body.body-theme-pienza::after {
     animation: none !important;
   }
 }
-.catalog-groups {
-  display: grid;
-  gap: 28px;
-}
-.showcase-category-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.showcase-category-pill {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 7px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #1f57af;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(30, 98, 198, 0.16);
-  box-shadow: var(--shadow-card);
-  transition: transform var(--transition), box-shadow var(--transition);
-  cursor: default;
-}
-.showcase-category-pill:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(16, 58, 118, 0.1);
-}
-.category-group {
-  display: grid;
-  gap: 14px;
-}
-.category-title {
-  margin: 0;
-  padding: 0 0 12px;
-  border-radius: 0;
-  border: none;
-  border-bottom: 2px solid rgba(30, 98, 198, 0.12);
-  background: transparent;
-  color: var(--ink-900);
-  font-family: "Sora", "Manrope", sans-serif;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.category-title::before {
-  content: "";
-  width: 4px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--blue-700);
-  flex-shrink: 0;
-}
 
 @media (max-width: 1024px) {
-  .brand-theme-nitrolux .hero,
-  .brand-theme-pienza .hero {
-    min-height: 82px;
-    padding: 10px 16px;
-  }
+
 }
 
 @media (max-width: 740px) {
-  .brand-theme-nitrolux .hero,
-  .brand-theme-pienza .hero {
-    min-height: 76px;
-    padding: 10px 12px;
-  }
-  .brand-theme-nitrolux .hero-brand-name,
-  .brand-theme-pienza .hero-brand-name {
-    font-size: clamp(24px, 7vw, 34px);
-  }
-  .brand-theme-nitrolux .hero-brand-subtitle,
-  .brand-theme-pienza .hero-brand-subtitle {
-    font-size: 11px;
-  }
-  .brand-theme-nitrolux .hero-link-button,
-  .brand-theme-pienza .hero-link-button,
-  .brand-theme-nitrolux .hero-session-pill,
-  .brand-theme-pienza .hero-session-pill {
-    width: auto;
-    padding: 6px 9px;
-  }
+
 }
 
 .load-more-panel {
@@ -2349,8 +2193,7 @@ body.body-theme-pienza::after {
 }
 
 @media (max-width: 900px) {
-  .brand-tabs,
-  .stats-grid {
+.brand-tabs {
     gap: 10px;
   }
   .toolbar {
@@ -2382,18 +2225,16 @@ body.body-theme-pienza::after {
   .hero {
     max-width: calc(100vw - 24px);
   }
-  .brand-tabs,
-  .toolbar,
-  .stats-grid,
-  .catalog-grid {
+.brand-tabs,
+.toolbar,
+.catalog-grid {
     grid-template-columns: 1fr;
   }
-  .brand-tab,
-  .toolbar,
-  .export-panel,
-  .stat-card,
-  .product-card,
-  .detail-panel {
+.brand-tab,
+.toolbar,
+.export-panel,
+.product-card,
+.detail-panel {
     border-radius: 14px;
   }
   .brand-tab {
@@ -2495,15 +2336,7 @@ body.body-theme-pienza::after {
   .hero-session-pill {
     width: 100%;
   }
-  .stats-grid {
-    gap: 8px;
-  }
-  .stat-card {
-    padding: 14px;
-  }
-  .stat-card strong {
-    font-size: 30px;
-  }
+
   .detail-gallery {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2518,11 +2351,7 @@ body.body-theme-pienza::after {
     width: 100%;
     max-width: none;
   }
-  .brand-theme-nitrolux .hero,
-  .brand-theme-pienza .hero {
-    min-height: auto;
-    padding: 12px;
-  }
+
   .brand-theme-nitrolux .hero-identity,
   .brand-theme-pienza .hero-identity,
   .hero-identity {
@@ -2577,11 +2406,10 @@ body.body-theme-pienza::after {
     text-align: center;
     white-space: normal;
   }
-  .brand-tabs,
-  .toolbar,
-  .stats-grid,
-  .catalog-grid,
-  .catalog-grid-flat {
+.brand-tabs,
+.toolbar,
+.catalog-grid,
+.catalog-grid-flat {
     width: 100%;
     min-width: 0;
   }
@@ -3022,4 +2850,58 @@ body.body-theme-pienza::after {
   .brand-theme-pienza .card-body {
     padding: 14px 14px 12px;
   }
+}
+
+
+.admin-review-change-section .admin-change-counts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.admin-review-change-section .admin-change-counts .admin-status-box {
+  min-width: 0;
+}
+.admin-review-change-section .admin-change-counts strong {
+  color: var(--brand-700, #123a75);
+  font-size: 1.8rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+
+.technical-sheet-panel { min-width: 0; }
+.technical-sheet-panel .admin-status-box p { margin: 0; line-height: 1.6; }
+.technical-sheet-panel .admin-panel-head h3 { margin: 0; }
+.technical-sheet-actions { align-items: end; }
+.technical-sheet-file { display: grid; gap: 6px; min-width: 0; max-width: 100%; font-weight: 600; }
+.technical-sheet-file input, .technical-sheet-file select { max-width: 100%; min-height: 42px; font: inherit; }
+.technical-sheet-file select { padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: white; color: var(--ink-700); }
+.technical-sheet-table-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line-soft); border-radius: 10px; }
+.technical-sheet-table { width: 100%; min-width: 680px; border-collapse: collapse; table-layout: fixed; font-size: 13px; text-align: left; }
+.technical-sheet-table th, .technical-sheet-table td { padding: 14px; vertical-align: top; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; white-space: pre-wrap; }
+.technical-sheet-table thead { background: var(--surface-soft, #f3f6fa); }
+.technical-sheet-table th:first-child { width: 20%; }
+.technical-sheet-table th:last-child { width: 22%; }
+.technical-sheet-table tbody th > * { display: block; margin-bottom: 5px; }
+.technical-sheet-table tbody th span, .technical-sheet-table small { font-weight: 400; color: var(--ink-700); }
+.technical-sheet-table td p { margin: 8px 0 0; }
+.technical-sheet-table tr:last-child > * { border-bottom: 0; }
+
+.technical-sheet-panel .stat-card { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: 10px; }
+.technical-sheet-panel .stat-card strong { font-size: 26px; line-height: 1.1; color: var(--blue-900); }
+.technical-sheet-panel .stat-card span { font-size: 13px; color: var(--ink-700); }
+
+.admin-excel-entry { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.admin-excel-entry h2, .admin-excel-entry p { margin: 0; }
+.admin-excel-entry p { margin-top: 6px; color: var(--ink-700); }
+.admin-excel-entry .export-button { flex-shrink: 0; }
+.technical-sheet-upload { display: grid; justify-items: start; gap: 12px; padding: 24px; border: 2px dashed var(--blue-700); border-radius: 12px; background: var(--blue-100); }
+.technical-sheet-upload h3, .technical-sheet-upload p { margin: 0; }
+.technical-sheet-upload p { color: var(--ink-700); line-height: 1.6; }
+.technical-sheet-choose.export-button { background: var(--blue-800); color: white; border-color: var(--blue-800); min-height: 48px; padding: 12px 20px; }
+.technical-sheet-choose.export-button:hover { background: var(--blue-900); }
+.technical-sheet-choose.export-button:disabled { opacity: 0.6; cursor: wait; }
+.technical-sheet-upload:focus-within { outline: 2px solid var(--blue-800); outline-offset: 3px; }
+@media (max-width: 640px) {
+  .admin-excel-entry { align-items: stretch; flex-direction: column; }
+  .technical-sheet-upload { padding: 18px; }
+  .technical-sheet-choose.export-button { width: 100%; }
 }

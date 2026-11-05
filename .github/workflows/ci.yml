@@ -27,12 +27,27 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Audit backend dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --no-deps --disable-pip -r requirements.lock
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
       - name: Run backend tests
         run: pytest -q
+
+      - name: Check product presentation
+        run: node scripts/check_product_presentation.mjs
+
+      - name: Check photo batch API contract
+        run: node scripts/check_photo_batches.mjs
 
       - name: Run frontend lint
         working-directory: frontend

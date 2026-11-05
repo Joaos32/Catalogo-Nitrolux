@@ -8,12 +8,19 @@ import json
 import logging
 import os
 import secrets
+from contextlib import nullcontext
+from contextvars import ContextVar
+from functools import wraps
+from uuid import uuid4
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .core import load_settings
+from . import blob_cache, state_database
+from .blob_versioning import put_versioned, BlobWriteConflictError
+from .file_lock import document_lock
 
 
 logger = logging.getLogger(__name__)
@@ -25,6 +32,35 @@ PASSWORD_HASH_ITERATIONS = 390000
 MIN_REPRESENTATIVE_PASSWORD_LENGTH = 10
 PASSWORD_RESET_CODE_BYTES = 9
 PASSWORD_RESET_EXPIRES_MINUTES = 60
+
+
+class RegistryWriteConflictError(ValueError):
+    """A different writer changed the representative registry."""
+
+
+_mutation_snapshot: ContextVar[dict | None] = ContextVar("registry_mutation", default=None)
+
+
+def _registry_mutation(function):
+    @wraps(function)
+    def mutate(*args, **kwargs):
+        remote = state_database.is_configured() or _s3_registry_is_configured() or bool(_blob_token())
+        with nullcontext() if remote else document_lock(_managed_users_path()):
+            snapshot = _load_managed_users_payload(fresh=True)
+            users = snapshot.get("users") if isinstance(snapshot, dict) else None
+            if not isinstance(users, list) or any(not isinstance(user, dict) for user in users):
+                raise RuntimeError("Invalid representative registry; refusing to overwrite it")
+            emails = [_normalize_email(user.get("email") or user.get("login")) for user in users]
+            if any(not email for email in emails) or len(set(emails)) != len(emails):
+                raise RuntimeError("Invalid representative registry; refusing to discard records")
+            context_token = _mutation_snapshot.set(snapshot)
+            try:
+                return function(*args, **kwargs)
+            except (state_database.StateWriteConflictError, BlobWriteConflictError, TimeoutError) as exc:
+                raise RegistryWriteConflictError("Representative data changed; reload and retry") from exc
+            finally:
+                _mutation_snapshot.reset(context_token)
+    return mutate
 
 
 def _stringify(value: Any) -> str:
@@ -100,6 +136,8 @@ def _s3_registry_config() -> dict[str, str]:
 
 
 def _s3_registry_is_configured() -> bool:
+    if state_database.backend_preference() == "blob":
+        return False
     config = _s3_registry_config()
     if config["bucket"] and config["access_key"] and config["secret_key"]:
         return True
@@ -115,7 +153,8 @@ def representative_login_storage_is_configured() -> bool:
 
     config = _s3_registry_config()
     s3_configured = bool(
-        config["bucket"]
+        state_database.backend_preference() != "blob"
+        and config["bucket"]
         and (
             (config["access_key"] and config["secret_key"])
             or config["role_arn"]
@@ -124,6 +163,7 @@ def representative_login_storage_is_configured() -> bool:
     )
     return bool(
         _parse_environment_representatives()
+        or state_database.is_configured()
         or s3_configured
         or _blob_token()
         or _managed_users_path().is_file()
@@ -181,72 +221,75 @@ def _load_s3_payload() -> dict[str, Any]:
         response = _s3_registry_client().get_object(Bucket=config["bucket"], Key=config["key"])
     except ClientError as exc:
         if str(exc.response.get("Error", {}).get("Code") or "") in {"NoSuchKey", "404"}:
-            return {"users": []}
+            return {"users": [], "_storage_missing": True}
         raise
     payload = json.loads(response["Body"].read().decode("utf-8"))
     if isinstance(payload, dict):
-        return payload
+        return {**payload, "_storage_etag": response.get("ETag"), "_storage_missing": False}
     if isinstance(payload, list):
-        return {"users": payload}
-    return {"users": []}
+        return {"users": payload, "_storage_etag": response.get("ETag"), "_storage_missing": False}
+    raise ValueError("Invalid representative state")
 
 
 def _write_s3_payload(payload: dict[str, Any]) -> None:
     config = _s3_registry_config()
-    _s3_registry_client().put_object(
-        Bucket=config["bucket"],
-        Key=config["key"],
-        Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-        ContentType="application/json; charset=utf-8",
-        CacheControl="no-store",
-        ServerSideEncryption="AES256",
-    )
+    from botocore.exceptions import ClientError
+    snapshot = _mutation_snapshot.get()
+    condition = _write_condition(snapshot)
+    try:
+        _s3_registry_client().put_object(
+            Bucket=config["bucket"],
+            Key=config["key"],
+            Body=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            ContentType="application/json; charset=utf-8",
+            CacheControl="no-store",
+            ServerSideEncryption="AES256",
+            **({"IfNoneMatch": "*"} if condition["expected_missing"] else {"IfMatch": condition["expected_etag"]}),
+        )
+    except ClientError as exc:
+        if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {409, 412} or exc.response.get("Error", {}).get("Code") in {"PreconditionFailed", "ConditionalRequestConflict"}:
+            raise RegistryWriteConflictError("Representative data changed; reload and retry") from exc
+        raise
 
 
-def _load_blob_payload() -> dict[str, Any] | None:
+def _load_blob_payload(*, fresh: bool = False) -> dict[str, Any] | None:
     token = _blob_token()
     if not token:
         return None
-
     from vercel.blob import BlobNotFoundError, get
 
-    try:
-        result = get(
-            _managed_users_blob_path(),
-            access="private",
-            token=token,
-            use_cache=False,
-        )
-    except BlobNotFoundError:
-        return {"users": []}
-    if result is None or not result.content:
-        return {"users": []}
+    pathname = _managed_users_blob_path()
 
-    payload = json.loads(result.content.decode("utf-8"))
+    def fetch() -> tuple[bytes | None, str | None]:
+        try:
+            result = get(pathname, access="private", token=token, use_cache=False)
+        except BlobNotFoundError:
+            return None, None
+        content = bytes(result.content) if result and result.content else None
+        if content:
+            json.loads(content.decode("utf-8"))
+        return content, result.etag if result else None
+
+    content, etag = blob_cache.read_versioned(token, pathname, fetch, fresh=fresh)
+    if not content:
+        return {"users": [], "_storage_missing": True}
+    payload = json.loads(content.decode("utf-8"))
     if isinstance(payload, dict):
-        return payload
+        return {**payload, "_storage_etag": etag, "_storage_missing": False}
     if isinstance(payload, list):
-        return {"users": payload}
-    return {"users": []}
+        return {"users": payload, "_storage_etag": etag, "_storage_missing": False}
+    raise ValueError("Invalid representative state")
 
 
 def _write_blob_payload(payload: dict[str, Any]) -> bool:
     token = _blob_token()
     if not token:
         return False
-
-    from vercel.blob import put
-
-    put(
-        _managed_users_blob_path(),
-        json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-        access="private",
-        content_type="application/json; charset=utf-8",
-        add_random_suffix=False,
-        overwrite=True,
-        cache_control_max_age=0,
-        token=token,
-    )
+    pathname = _managed_users_blob_path()
+    content = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    blob_cache.write_versioned(token, pathname, content, lambda: put_versioned(
+        pathname, content, token=token, **_write_condition(_mutation_snapshot.get()),
+    ))
     return True
 
 
@@ -331,6 +374,7 @@ def _normalize_login_user(
         return None
 
     return {
+        **item,
         "email": email,
         "name": name,
         "password": password,
@@ -387,7 +431,24 @@ def _parse_environment_representatives() -> list[dict[str, Any]]:
     return users
 
 
-def _load_managed_users_payload() -> dict[str, Any]:
+def _load_managed_users_payload(*, fresh: bool = False) -> dict[str, Any]:
+    snapshot = _mutation_snapshot.get()
+    if snapshot is not None:
+        return snapshot
+    if state_database.is_configured():
+        try:
+            stored = state_database.load_object(state_database.REPRESENTATIVES_KEY)
+            if stored is None:
+                return {"users": [], "_storage_missing": True}
+            payload = json.loads(stored.content.decode("utf-8"))
+            if isinstance(payload, dict):
+                return {**payload, "_storage_etag": stored.etag, "_storage_missing": False}
+            if isinstance(payload, list):
+                return {"users": payload, "_storage_etag": stored.etag, "_storage_missing": False}
+            raise ValueError("Invalid representative state")
+        except Exception as exc:
+            raise RuntimeError("Representative storage is temporarily unavailable") from exc
+
     if _s3_registry_is_configured():
         try:
             return _load_s3_payload()
@@ -397,7 +458,7 @@ def _load_managed_users_payload() -> dict[str, Any]:
 
     if _blob_token():
         try:
-            return _load_blob_payload() or {"users": []}
+            return (_load_blob_payload(fresh=True) if fresh else _load_blob_payload()) or {"users": []}
         except Exception as exc:
             logger.exception("Unable to read representative registry from Vercel Blob: %s", exc)
             raise RuntimeError("Representative storage is temporarily unavailable") from exc
@@ -409,44 +470,52 @@ def _load_managed_users_payload() -> dict[str, Any]:
     try:
         payload = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Ignoring invalid representative registry at %s: %s", target, exc)
-        return {"users": []}
+        raise RuntimeError("Representative storage is temporarily unavailable") from exc
 
     if isinstance(payload, dict):
         return payload
     if isinstance(payload, list):
         return {"users": payload}
-    return {"users": []}
+    raise RuntimeError("Invalid representative registry; refusing to overwrite it")
 
 
-def _load_managed_users_with_secrets() -> list[dict[str, Any]]:
-    try:
-        payload = _load_managed_users_payload()
-    except RuntimeError as exc:
-        # Mantem o login de contingencia por variaveis de ambiente disponivel
-        # quando o Vercel Blob estiver suspenso ou temporariamente indisponivel.
-        logger.error("Managed representatives unavailable; using environment fallback: %s", exc)
-        return []
-    raw_users = payload.get("users") if isinstance(payload, dict) else []
-    if not isinstance(raw_users, list):
-        raw_users = []
-
-    users: list[dict[str, Any]] = []
-    seen_emails: set[str] = set()
+def _login_registry_state(*, fresh: bool = False) -> dict[str, Any]:
+    """Read identity and revocation state together; provider errors never restore credentials."""
+    payload = _load_managed_users_payload(fresh=fresh)
+    raw_users = payload.get("users")
+    revoked = payload.get("revoked_sessions", {})
+    if not isinstance(raw_users, list) or not isinstance(revoked, dict):
+        raise RuntimeError("Invalid representative registry")
+    users, seen, blocked = [], set(), set()
     configured_admin_emails = _configured_admin_emails()
     for item in raw_users:
-        normalized = _normalize_login_user(item, source="managed", managed=True)
-        if not normalized or normalized["email"] in seen_emails:
+        if not isinstance(item, dict):
+            raise RuntimeError("Invalid representative registry")
+        email = _normalize_email(item.get("email") or item.get("login"))
+        if _parse_bool(item.get("disabled")):
+            blocked.add(email)
             continue
-        if normalized["email"] in configured_admin_emails:
-            normalized["is_admin"] = True
-        users.append(normalized)
-        seen_emails.add(normalized["email"])
-    return users
+        normalized = _normalize_login_user(item, source="managed", managed=True)
+        if normalized and email not in seen:
+            if email in configured_admin_emails:
+                normalized["is_admin"] = True
+            users.append(normalized)
+            seen.add(email)
+    for user in _parse_environment_representatives():
+        if user["email"] not in seen and user["email"] not in blocked:
+            users.append(user)
+            seen.add(user["email"])
+    for user in users:
+        user["_revoked_sessions"] = revoked
+    return {"users": users, "blocked_emails": blocked, "revoked_sessions": revoked}
 
 
 def _serialize_managed_user(user: dict[str, Any]) -> dict[str, Any]:
+    transient = {"managed", "source", "password", "password_hash", "passwordHash",
+                 "password_reset_token_hash", "password_reset_expires_at", "password_reset_created_at"}
     payload = {
+        **{key: value for key, value in user.items() if key not in transient},
+        "session_version": user.get("session_version"),
         "email": user["email"],
         "name": user["name"],
         "created_at": user.get("created_at"),
@@ -464,11 +533,30 @@ def _serialize_managed_user(user: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _write_condition(snapshot: dict | None) -> dict:
+    if snapshot is None:
+        raise RegistryWriteConflictError("Registry update requires a versioned snapshot")
+    missing = bool(snapshot.get("_storage_missing"))
+    etag = snapshot.get("_storage_etag")
+    if not missing and not etag:
+        raise RegistryWriteConflictError("Registry version unavailable; reload and retry")
+    return {"expected_etag": etag, "expected_missing": missing}
+
+
 def _write_managed_users(users: list[dict[str, Any]]) -> None:
+    snapshot = _mutation_snapshot.get() or {}
     payload = {
+        "revoked_sessions": snapshot.get("revoked_sessions", {}),
         "users": [_serialize_managed_user(user) for user in users],
         "updated_at": _utcnow_iso(),
     }
+    if state_database.is_configured():
+        state_database.write_object(
+            state_database.REPRESENTATIVES_KEY,
+            json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            **_write_condition(_mutation_snapshot.get()),
+        )
+        return
     if _s3_registry_is_configured():
         _write_s3_payload(payload)
         return
@@ -477,20 +565,41 @@ def _write_managed_users(users: list[dict[str, Any]]) -> None:
 
     target = _managed_users_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def list_representative_login_users() -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen_emails: set[str] = set()
-    for source_users in (_load_managed_users_with_secrets(), _parse_environment_representatives()):
-        for user in source_users:
-            email = user["email"]
-            if email in seen_emails:
-                continue
-            merged.append(user)
-            seen_emails.add(email)
-    return merged
+def list_representative_login_users(*, strict: bool = False, fresh: bool = False) -> list[dict[str, Any]]:
+    try:
+        return _login_registry_state(fresh=fresh)["users"]
+    except RuntimeError:
+        if strict:
+            raise
+        logger.error("Representative registry unavailable; denying authentication")
+        return []
+
+
+@_registry_mutation
+def revoke_auth_sessions(sessions: list[tuple[str, int]]) -> None:
+    """Persist session-specific revocations with the same CAS/lock as identity changes."""
+    import time
+    now = int(time.time())
+    snapshot = _mutation_snapshot.get()
+    revoked = snapshot.get("revoked_sessions", {})
+    if not isinstance(revoked, dict):
+        raise RuntimeError("Invalid session revocation state")
+    active = {key: expiry for key, expiry in revoked.items() if int(expiry) > now}
+    for session_id, expiry in sessions:
+        if session_id and expiry > now:
+            active[hashlib.sha256(session_id.encode("utf-8")).hexdigest()] = expiry
+    if len(active) > 10000:
+        raise RuntimeError("Session revocation capacity exceeded")
+    snapshot["revoked_sessions"] = active
+    _write_managed_users(_load_managed_users_raw())
 
 
 def _sanitize_admin_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -527,12 +636,23 @@ def _generate_password_reset_code() -> str:
     return secrets.token_urlsafe(PASSWORD_RESET_CODE_BYTES).replace("-", "").replace("_", "").upper()[:12]
 
 
-def _load_managed_users_raw() -> list[dict[str, Any]]:
-    payload = _load_managed_users_payload()
+def _load_managed_users_raw(*, fresh: bool = True) -> list[dict[str, Any]]:
+    payload = _load_managed_users_payload(fresh=fresh)
     raw_users = payload.get("users") if isinstance(payload, dict) else []
     if not isinstance(raw_users, list):
         return []
-    return [item for item in raw_users if isinstance(item, dict)]
+    return [
+        {
+            **item,
+            "email": _normalize_email(item.get("email") or item.get("login")),
+            "name": _stringify(item.get("name") or item.get("display_name") or item.get("email") or item.get("login")),
+            "password_hash": item.get("password_hash") or item.get("passwordHash") or "",
+            "is_admin": _parse_bool(item.get("is_admin") if "is_admin" in item else item.get("admin")),
+            "managed": True,
+            "source": "managed",
+        }
+        for item in raw_users if isinstance(item, dict)
+    ]
 
 
 def _sanitize_reset_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -547,6 +667,11 @@ def _sanitize_reset_user(user: dict[str, Any]) -> dict[str, Any]:
 
 def build_representative_admin_summary() -> dict[str, Any]:
     merged_users = list_representative_login_users()
+    # A reset-only record may overlay a user still authenticating from environment settings.
+    recovery_state = {user["email"]: user for user in _load_managed_users_raw(fresh=False)}
+    for user in merged_users:
+        pending = recovery_state.get(user["email"], {})
+        user.update({key: pending[key] for key in ("password_reset_token_hash", "password_reset_expires_at", "password_reset_created_at") if key in pending})
     sanitized = sorted(
         (_sanitize_admin_user(user) for user in merged_users),
         key=lambda item: (0 if item["managed"] else 1, item["name"].lower(), item["email"]),
@@ -563,6 +688,7 @@ def build_representative_admin_summary() -> dict[str, Any]:
     }
 
 
+@_registry_mutation
 def upsert_managed_representative(
     email: str,
     name: str,
@@ -579,7 +705,7 @@ def upsert_managed_representative(
     if not normalized_name:
         raise ValueError("Missing representative name")
 
-    managed_users = _load_managed_users_with_secrets()
+    managed_users = _load_managed_users_raw()
     existing_user = next((user for user in managed_users if user["email"] == normalized_email), None)
     environment_users = {user["email"] for user in _parse_environment_representatives()}
     if normalized_email in environment_users and existing_user is None:
@@ -587,12 +713,19 @@ def upsert_managed_representative(
 
     timestamp = _utcnow_iso()
     if existing_user:
+        if existing_user.get("disabled") and not normalized_password:
+            raise ValueError("A new password is required to reactivate an account")
+        existing_user.pop("disabled", None)
         existing_user["name"] = normalized_name
         existing_user["updated_at"] = timestamp
         if normalized_password:
             existing_user["password_hash"] = hash_representative_password(normalized_password)
             existing_user["password"] = ""
+            for key in ("password_reset_token_hash", "password_reset_expires_at", "password_reset_created_at"):
+                existing_user.pop(key, None)
         if is_admin is not None:
+            if bool(existing_user.get("is_admin")) != is_admin:
+                existing_user["session_version"] = uuid4().hex
             existing_user["is_admin"] = bool(is_admin)
         _write_managed_users(managed_users)
         return False, _sanitize_admin_user(existing_user)
@@ -616,27 +749,32 @@ def upsert_managed_representative(
     return True, _sanitize_admin_user(created_user)
 
 
+@_registry_mutation
 def delete_managed_representative(email: str) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     if not normalized_email:
         raise ValueError("Missing representative email")
 
-    managed_users = _load_managed_users_with_secrets()
+    managed_users = _load_managed_users_raw()
     kept_users = [user for user in managed_users if user["email"] != normalized_email]
     if len(kept_users) == len(managed_users):
         raise KeyError(normalized_email)
 
+    # Retain a tombstone so another credential source cannot reactivate this identity.
+    kept_users.append({"email": normalized_email, "name": normalized_email,
+                       "disabled": True, "is_admin": False, "session_version": uuid4().hex})
     _write_managed_users(kept_users)
     return {"deleted": True, "email": normalized_email}
 
 
+@_registry_mutation
 def create_representative_password_reset(email: str) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     if not normalized_email:
         raise ValueError("Missing representative email")
 
-    existing_login_user = next((user for user in list_representative_login_users() if user["email"] == normalized_email), None)
     raw_managed_users = _load_managed_users_raw()
+    existing_login_user = next((user for user in list_representative_login_users() if user["email"] == normalized_email), None)
     raw_user = next(
         (
             user
@@ -646,7 +784,7 @@ def create_representative_password_reset(email: str) -> dict[str, Any]:
         None,
     )
 
-    if existing_login_user is None and raw_user is None:
+    if (existing_login_user is None and raw_user is None) or (raw_user and raw_user.get("disabled")):
         raise KeyError(normalized_email)
 
     timestamp = _utcnow_iso()
@@ -682,6 +820,7 @@ def create_representative_password_reset(email: str) -> dict[str, Any]:
     }
 
 
+@_registry_mutation
 def reset_representative_password_with_code(email: str, reset_code: str, new_password: str) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     normalized_code = _stringify(reset_code).upper()

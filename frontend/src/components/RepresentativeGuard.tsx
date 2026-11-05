@@ -1,8 +1,7 @@
 ﻿import type { PropsWithChildren } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Navigate, useLocation } from "react-router-dom";
 
-import { fetchRepresentativeSession } from "../lib/catalog-api";
+import { useRepresentativeSession } from "../lib/use-representative-session";
 
 function buildNextPath(pathname: string, search: string, hash: string): string {
   const next = `${pathname}${search}${hash}`.trim();
@@ -14,13 +13,7 @@ export default function RepresentativeGuard({
   children,
 }: PropsWithChildren): JSX.Element {
   const location = useLocation();
-  const sessionQuery = useQuery({
-    queryKey: ["representative-session"],
-    queryFn: fetchRepresentativeSession,
-    retry: false,
-    refetchInterval: 2 * 60_000,
-    refetchIntervalInBackground: false,
-  });
+  const sessionQuery = useRepresentativeSession();
 
   if (sessionQuery.isLoading) {
     return (

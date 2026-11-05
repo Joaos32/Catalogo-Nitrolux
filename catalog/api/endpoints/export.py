@@ -15,12 +15,20 @@ from fastapi.responses import JSONResponse, Response
 
 from ..errors import internal_server_error_response
 from ..security import require_representative_access
+from ...resource_limits import ExportLimitError, check_export_size
 
 
 router = APIRouter(dependencies=[Depends(require_representative_access)])
 logger = logging.getLogger(__name__)
 EXPORT_CACHE_CONTROL = "private, no-cache"
 _export_build_lock = threading.Lock()
+_export_slots = threading.BoundedSemaphore(2)
+
+
+class ExportBusyError(RuntimeError):
+    pass
+
+
 _EXPORT_CACHE_TTL_SECONDS = 10
 _export_cache_refreshed_at = 0.0
 
@@ -44,7 +52,16 @@ def _cached_export(
     )
 
 
-def _build_export(
+def _build_export(**options) -> tuple[bytes, str, str]:
+    if not _export_slots.acquire(blocking=False):
+        raise ExportBusyError("Há outras exportações em andamento. Tente novamente em instantes.")
+    try:
+        return _build_export_with_cache(**options)
+    finally:
+        _export_slots.release()
+
+
+def _build_export_with_cache(
     *,
     format_name: str,
     query: str,
@@ -101,6 +118,7 @@ async def export_catalog(
             code=normalized_code,
             brand=normalized_brand,
         )
+        check_export_size(len(payload))
         etag = f'"{hashlib.sha256(payload).hexdigest()}"'
         headers = {
             "Content-Disposition": f'attachment; filename="{filename}"',
@@ -115,6 +133,10 @@ async def export_catalog(
             media_type=media_type,
             headers=headers,
         )
+    except ExportBusyError as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)}, headers={"Cache-Control": "no-store", "Retry-After": "5"})
+    except ExportLimitError as exc:
+        return JSONResponse(status_code=413, content={"error": str(exc)}, headers={"Cache-Control": "no-store"})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:

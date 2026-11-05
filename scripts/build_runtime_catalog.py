@@ -19,13 +19,16 @@ from catalog.services.catalog_service import (  # noqa: E402
 )
 
 
+from catalog.product_identity import deduplicate_products  # noqa: E402
+
+
 def main() -> None:
     # Match Vercel's filesystem: there is no user OneDrive directory, while
     # catalog/json remains available as a bundled stock source.
     for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer", "USERPROFILE"):
         os.environ.pop(name, None)
     os.environ["CATALOG_LOCAL_PRODUCTS_HOME_FALLBACK"] = "false"
-    products = _build_catalog_products_from_sources()
+    products = deduplicate_products(_build_catalog_products_from_sources())
     payload = {
         "version": 1,
         "source_hashes": prebuilt_source_hashes(),

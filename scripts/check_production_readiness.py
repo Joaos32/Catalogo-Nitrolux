@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 LOCAL_HOST_MARKERS = ("localhost", "127.0.0.1", "0.0.0.0")
@@ -154,8 +155,26 @@ def _validate_backend(values: dict[str, str]) -> tuple[list[str], list[str]]:
         except (OSError, json.JSONDecodeError):
             errors.append("CATALOG_REPRESENTATIVE_USERS_FILE must point to a valid JSON login registry.")
 
+    state_backend = str(values.get("CATALOG_STATE_BACKEND") or "auto").strip().lower()
+    if state_backend not in {"auto", "blob", "postgres"}:
+        errors.append("CATALOG_STATE_BACKEND must be auto, blob or postgres.")
+    database_url = values.get("CATALOG_STATE_DATABASE_URL", "").strip() if state_backend != "blob" else ""
+    if state_backend == "postgres" and not database_url:
+        errors.append("CATALOG_STATE_DATABASE_URL is required for the postgres backend.")
+    if database_url and _is_true(values.get("VERCEL", "")):
+        try:
+            parsed_database = urlsplit(database_url)
+            database_host = str(parsed_database.hostname or "").lower()
+            if parsed_database.scheme not in {"postgres", "postgresql"} or not database_host:
+                errors.append("CATALOG_STATE_DATABASE_URL must be a PostgreSQL URL with an explicit remote host on Vercel.")
+            elif database_host in {"localhost", "::1", "0.0.0.0"} or database_host.startswith("127."):
+                errors.append("CATALOG_STATE_DATABASE_URL must use a remote host on Vercel; localhost refers to the Vercel function.")
+        except ValueError:
+            errors.append("CATALOG_STATE_DATABASE_URL has an invalid PostgreSQL URL format.")
+
     has_remote_representative_registry = bool(
-        values.get("CATALOG_REPRESENTATIVE_S3_BUCKET")
+        database_url
+        or (state_backend != "blob" and values.get("CATALOG_REPRESENTATIVE_S3_BUCKET"))
         or values.get("BLOB_READ_WRITE_TOKEN")
     )
     if not has_representatives and not has_remote_representative_registry:

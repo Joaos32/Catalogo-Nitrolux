@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from fastapi.testclient import TestClient
 
 from catalog.bootstrap import create_app
@@ -17,10 +19,10 @@ def test_integration_products_authenticates_api_key(monkeypatch):
     monkeypatch.setenv("CATALOG_INTEGRATION_API_KEY", "integration-test-secret")
     monkeypatch.setattr(
         "catalog.api.endpoints.integration._integration_catalog_products",
-        lambda: (
+        lru_cache(maxsize=1)(lambda: (
             {"Codigo": "6419", "Nome": "Produto", "Categoria": "PENDENTE"},
             {"Codigo": "6000", "Nome": "Outro", "Categoria": "LAMPADA"},
-        ),
+        )),
     )
     client = TestClient(create_app())
 

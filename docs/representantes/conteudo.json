@@ -1,0 +1,93 @@
+{
+  "title": "Guia do representante",
+  "subtitle": "Catálogo digital Nitrolux e Pienza",
+  "edition": "16/10/2026",
+  "url": "https://catalogo-nitrolux-ten.vercel.app",
+  "pages": [
+    {
+      "eyebrow": "01 / PRIMEIRO ACESSO",
+      "title": "O catálogo no seu atendimento",
+      "lead": "Consulte produtos Nitrolux e Pienza, confira as informações disponíveis e baixe materiais para apoiar a apresentação ao cliente. Acesse pelo navegador do celular, tablet ou computador.",
+      "blocks": [
+        {"kind": "link", "text": "Abra o catálogo", "url": "https://catalogo-nitrolux-ten.vercel.app"},
+        {"kind": "heading", "text": "Entre com o seu acesso individual"},
+        {"kind": "steps", "items": ["Abra o endereço acima no navegador.", "Preencha **E-mail** e **Senha** com os dados fornecidos pela equipe responsável pelo seu acesso.", "Toque ou clique em **Entrar no catálogo**."]},
+        {"kind": "image", "file": "01-acesso.png", "width": 320, "caption": "Tela de entrada. Os campos devem ser preenchidos com o seu próprio acesso."},
+        {"kind": "callout", "title": "Ainda não recebeu seu login?", "text": "Solicite o cadastro à equipe comercial responsável. A tela de entrada é destinada a usuários que já receberam suas credenciais."},
+        {"kind": "paragraph", "text": "Depois de entrar, escolha a marca, localize o produto e abra os detalhes. A área **Painel interno** é destinada à administração; ela não é necessária para consultar o catálogo."},
+        {"kind": "paragraph", "text": "**Cuide do seu acesso:** não compartilhe sua senha. Ao terminar em um dispositivo compartilhado, use **Sair**."}
+      ]
+    },
+    {
+      "eyebrow": "02 / CONSULTA DE PRODUTOS",
+      "title": "Encontre o produto certo",
+      "lead": "A busca e a categoria trabalham dentro da marca selecionada. Confira a aba antes de procurar um item.",
+      "blocks": [
+        {"kind": "image", "file": "02-consulta.png", "width": 510, "caption": "As abas Nitrolux e Pienza ficam acima de Buscar produto e Categoria."},
+        {"kind": "steps", "items": ["**Escolha a marca.** Clique em **Nitrolux** ou **Pienza**.", "**Use Buscar produto.** Digite o código, parte do nome ou uma categoria. Quando souber o código, use-o para localizar o item com mais precisão.", "**Refine em Categoria.** Selecione a categoria desejada. A busca e a categoria podem ser usadas juntas.", "**Abra o item.** Clique no cartão ou em **Ver produto e fotos** para consultar os detalhes.", "**Veja mais resultados.** Quando o botão **Carregar mais … produtos** estiver disponível, use-o para ampliar a lista exibida."]},
+        {"kind": "callout", "title": "A tela inicial mostra uma seleção", "text": "Sem busca e com Categoria em Todas, a página apresenta produtos sorteados. Essa seleção não representa todo o catálogo. Use a busca ou escolha uma categoria para procurar um item específico."},
+        {"kind": "heading", "text": "Exemplo de consulta"},
+        {"kind": "paragraph", "text": "Selecione **Nitrolux**, digite **1578** em **Buscar produto** e abra o resultado correspondente. O código é um exemplo presente nas telas deste guia; use o código do produto que deseja consultar."},
+        {"kind": "paragraph", "text": "**Não encontrou?** Apague o texto da busca, volte a Categoria para **Todas** e confira se a marca selecionada está correta."}
+      ]
+    },
+    {
+      "eyebrow": "03 / DETALHES E FOTOS",
+      "title": "Confira antes de compartilhar",
+      "lead": "Na tela do produto, confira a identificação e as informações cadastradas antes de baixar ou encaminhar um material.",
+      "blocks": [
+        {"kind": "split", "file": "03-produto.png", "width": 185, "caption": "Exemplo real do produto de código 1578.", "blocks": [
+          {"kind": "heading", "text": "O que consultar"},
+          {"kind": "bullets", "items": ["**Nome, marca e código:** confirme se o produto é o solicitado pelo cliente.", "**Descrição:** leia o resumo do item.", "**Especificações técnicas:** confira os dados exibidos para aquele produto.", "**Características:** consulte os campos adicionais disponíveis no cadastro."]},
+          {"kind": "heading", "text": "Como usar as fotos"},
+          {"kind": "steps", "items": ["Role até **Outras fotos**.", "Selecione uma miniatura para mudar a imagem principal, quando houver fotos disponíveis.", "Use **Baixar foto selecionada** para salvar a imagem atual ou **Baixar todas em ZIP** para solicitar o pacote."]},
+          {"kind": "heading", "text": "Ficha do produto"},
+          {"kind": "paragraph", "text": "Em **Baixar este produto**, escolha **Ficha técnica** para baixar o PDF do item aberto. Confira o arquivo antes de enviá-lo ao cliente."}
+        ]},
+        {"kind": "image", "file": "04-fotos.png", "width": 510, "caption": "Comandos da galeria. A disponibilidade das fotos depende do produto."},
+        {"kind": "paragraph", "text": "Se aparecer **Sem imagem**, consulte as demais fotos disponíveis ou informe o código do produto à equipe responsável. Para continuar a busca, clique em **Voltar ao catálogo**."}
+      ]
+    },
+    {
+      "eyebrow": "04 / DOWNLOADS E COMPARTILHAMENTO",
+      "title": "Escolha o material para cada uso",
+      "lead": "Você pode baixar um produto individual ou exportar os resultados da marca, busca e categoria selecionadas.",
+      "blocks": [
+        {"kind": "table", "headers": ["Opção", "Quando usar"], "rows": [
+          ["Ficha técnica", "PDF do produto aberto, para apresentar as informações do item ao cliente."],
+          ["PDF", "Documento com os produtos e informações do recorte escolhido."],
+          ["Excel", "Planilha para organizar e consultar os dados dos produtos."],
+          ["CSV", "Arquivo de dados para abrir em planilhas ou utilizar em outros sistemas."],
+          ["ZIP", "Pacote com dados e fotos disponíveis, conforme o conteúdo da exportação."],
+          ["JSON", "Dados estruturados; use quando esse formato for solicitado."]
+        ]},
+        {"kind": "heading", "text": "Para baixar um único produto"},
+        {"kind": "paragraph", "text": "Abra o produto e use os botões de **Baixar este produto**. Para enviar apenas uma imagem, use **Baixar foto selecionada** na galeria."},
+        {"kind": "heading", "text": "Para exportar uma seleção"},
+        {"kind": "steps", "items": ["Escolha **Nitrolux** ou **Pienza**.", "Ajuste **Buscar produto** e **Categoria** para definir o conteúdo desejado.", "Em **Exportar recorte Nitrolux** ou **Exportar recorte Pienza**, escolha o formato.", "Aguarde o download. Localize o arquivo na pasta de downloads do dispositivo e confira o conteúdo antes de compartilhar."]},
+        {"kind": "callout", "title": "A exportação acompanha os filtros", "text": "O arquivo considera a marca, a busca e a categoria selecionadas, mesmo quando a grade mostra apenas parte dos resultados. Para exportar só um item, abra esse produto e use Baixar este produto."},
+        {"kind": "paragraph", "text": "**Dica para o atendimento:** localize o código, confira os detalhes, baixe a ficha técnica ou a foto necessária e encaminhe o arquivo ao cliente pelo canal que você já utiliza. Compartilhar um link do catálogo pode exigir que o destinatário tenha acesso próprio."}
+      ]
+    },
+    {
+      "eyebrow": "05 / ACESSO E AJUDA",
+      "title": "Resolva as dúvidas mais comuns",
+      "lead": "Mantenha seu e-mail de acesso e o código do produto em mãos quando precisar de ajuda. Não envie sua senha.",
+      "blocks": [
+        {"kind": "heading", "text": "Esqueci minha senha"},
+        {"kind": "steps", "items": ["Solicite um **código de recuperação** ao administrador do catálogo.", "Na tela de entrada, clique em **Esqueci minha senha**.", "Preencha seu e-mail, o código recebido, **Nova senha** e **Confirmar nova senha**.", "Use uma nova senha com **pelo menos 10 caracteres** e clique em **Alterar senha**.", "Volte ao login e entre com a nova senha. Se o código não funcionar, solicite orientação ao administrador."]},
+        {"kind": "table", "headers": ["Situação", "O que fazer"], "rows": [
+          ["E-mail ou senha incorretos", "Confira o e-mail cadastrado e os dados digitados. Se necessário, use a recuperação de senha."],
+          ["O sistema pediu login novamente", "Entre novamente com suas credenciais. Isso pode acontecer quando a sessão expira."],
+          ["Nenhum item encontrado", "Confira a marca, apague a busca e selecione Todas em Categoria."],
+          ["Foto não carregou", "Aguarde o carregamento e verifique a conexão. Se continuar, informe o código do item à equipe responsável."],
+          ["Download não apareceu", "Verifique a pasta de downloads do navegador. Se necessário, tente novamente com um recorte menor."],
+          ["Serviço temporariamente indisponível", "Aguarde e tente novamente. Se persistir, envie a mensagem do erro à equipe responsável."]
+        ]},
+        {"kind": "callout", "title": "Como pedir suporte", "text": "Informe seu e-mail de acesso, o código do produto quando houver, o que tentou fazer e a mensagem exibida. Você pode enviar uma captura da tela sem mostrar senha ou código de recuperação."},
+        {"kind": "paragraph", "text": "**Ao finalizar:** use **Sair**, principalmente em computadores compartilhados."},
+        {"kind": "paragraph", "text": "Guia de uso para representantes • Edição de 16/10/2026. As telas ilustram a versão consultada nessa data; os produtos e as imagens disponíveis podem variar com a atualização do catálogo."}
+      ]
+    }
+  ]
+}

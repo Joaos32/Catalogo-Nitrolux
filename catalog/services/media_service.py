@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 def get_product_photos_payload(code: str | None = None, share_url: str | None = None) -> Dict:
     from .. import cdn_media, google_drive, onedrive, s3_media, vercel_blob_media
 
+    provider_failed = False
     if code:
         try:
             local_photos = onedrive.categorize_local_photos(code=code)
@@ -25,6 +26,7 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
             ):
                 return local_photos
         except Exception as local_exc:
+            provider_failed = True
             logger.warning(
                 "Local photo lookup failed, trying remote fallbacks: %s",
                 local_exc,
@@ -42,6 +44,7 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
                 if any(blob_photos.values()):
                     return blob_photos
             except Exception as blob_exc:
+                provider_failed = True
                 logger.warning(
                     "Vercel Blob photo lookup failed, trying next fallback: %s",
                     blob_exc,
@@ -54,6 +57,7 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
                 if any(s3_photos.values()):
                     return s3_photos
             except Exception as s3_exc:
+                provider_failed = True
                 logger.warning(
                     "S3 photo lookup failed, trying next fallback: %s",
                     s3_exc,
@@ -66,12 +70,17 @@ def get_product_photos_payload(code: str | None = None, share_url: str | None = 
                 if any(drive_photos.values()):
                     return drive_photos
             except Exception as drive_exc:
+                provider_failed = True
                 logger.warning(
                     "Google Drive photo lookup failed, trying Graph fallback: %s",
                     drive_exc,
                     exc_info=True,
                 )
 
+    if code and not share_url:
+        if provider_failed:
+            raise RuntimeError("Photo providers are temporarily unavailable")
+        return {"white_background": None, "ambient": None, "measures": None}
     if not share_url:
         raise ValueError("missing shareUrl query parameter")
 

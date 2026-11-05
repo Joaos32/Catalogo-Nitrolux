@@ -1,0 +1,2 @@
+export const MAX_TECHNICAL_FILE_BYTES = 300 * 1024 * 1024;
+export const MAX_TECHNICAL_UPLOAD_BYTES = 4 * 1024 * 1024;

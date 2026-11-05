@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+from contextlib import nullcontext
+from .file_lock import document_lock
 from pathlib import Path
 import re
 import sys
@@ -14,7 +16,9 @@ import unicodedata
 from urllib.parse import quote
 from typing import Any, Dict, List
 
+from . import erp_storage
 from .technical_specs import resolve_technical_specs
+from .product_identity import deduplicate_products
 from .erp_storage import ERPWriteConflictError, load_active as load_remote_erp, storage_uri, write_active as write_remote_erp
 
 
@@ -35,13 +39,6 @@ PRODUCT_CONTAINER_KEYS = (
 )
 CODE_PATTERN = re.compile(r"\d{3,12}")
 NUMERIC_TEXT_PATTERN = re.compile(r"\d+(?:[.,]\d+)?")
-DISCOVERY_PATTERNS = (
-    "erp*.json",
-    "pcprodut*.json",
-    "*produto*.json",
-    "*produt*.json",
-    "*catalog*.json",
-)
 JSON_TEXT_ENCODINGS = ("utf-8-sig", "utf-16", "latin-1")
 PREVIEW_SAMPLE_SIZE = 8
 PREVIEW_CHANGE_SAMPLE_SIZE = 8
@@ -295,16 +292,9 @@ def _env_flag(name: str, default: bool = True) -> bool:
 
 
 def get_max_upload_size_bytes() -> int:
-    value = os.getenv("CATALOG_ERP_MAX_UPLOAD_BYTES", "").strip()
-    if not value:
-        return 10 * 1024 * 1024
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise ValueError("CATALOG_ERP_MAX_UPLOAD_BYTES must be an integer") from exc
-    if parsed <= 0:
-        raise ValueError("CATALOG_ERP_MAX_UPLOAD_BYTES must be positive")
-    return parsed
+    from .resource_limits import on_vercel, positive_limit, VERCEL_BODY_LIMIT
+    limit = positive_limit("CATALOG_ERP_MAX_UPLOAD_BYTES", 10 * 1024 * 1024)
+    return min(limit, VERCEL_BODY_LIMIT) if on_vercel() else limit
 
 
 def _normalized_tokens(text: str) -> List[str]:
@@ -617,6 +607,32 @@ def _resolve_erp_source_dirs() -> List[Path]:
     return list(unique_dirs.values())
 
 
+
+def _is_erp_product_file(path: Path) -> bool:
+    try:
+        records = _extract_records(_load_json_file(path))
+        return any(_normalize_code(_pick_value(_build_lookup(record), CODE_ALIASES)) for record in records)
+    except (OSError, ValueError):
+        return False
+
+
+def _discover_erp_source_files() -> List[Path]:
+    # General report directories also hold audits, snapshots and test evidence.
+    # Only dedicated inbox/source directories accept arbitrary JSON filenames.
+    report_roots = {BASE_DIR.resolve(), (BASE_DIR / "reports").resolve()}
+    candidates: dict[Path, Path] = {}
+    for root in _resolve_erp_source_dirs():
+        if not root.is_dir():
+            continue
+        patterns = ("pcprodut*.json", "erp_products*.json") if root.resolve() in report_roots else ("*.json",)
+        for pattern in patterns:
+            for item in root.glob(pattern):
+                resolved = item.resolve(strict=False)
+                if resolved not in candidates and item.is_file() and _is_erp_product_file(item):
+                    candidates[resolved] = item
+    return list(candidates.values())
+
+
 def _resolve_json_target_path() -> Path:
     configured = os.getenv("CATALOG_ERP_JSON_PATH", "").strip()
     if configured:
@@ -639,16 +655,7 @@ def _resolve_json_path() -> Path:
     if not _env_flag("CATALOG_ERP_AUTO_DISCOVERY", default=True):
         return target
 
-    candidates: List[Path] = []
-    for root in _resolve_erp_source_dirs():
-        if not root.is_dir():
-            continue
-        for pattern in DISCOVERY_PATTERNS:
-            candidates.extend(
-                item
-                for item in root.glob(pattern)
-                if item.is_file()
-            )
+    candidates = _discover_erp_source_files()
 
     if candidates:
         unique_candidates = {item.resolve(): item for item in candidates}
@@ -1035,9 +1042,9 @@ def import_erp_payload(payload: Any, deployment_source: Dict[str, Any] | None = 
     if not index:
         raise ValueError("no valid product records with code found in ERP payload")
 
-    with _ERP_MUTATION_LOCK:
+    with _ERP_MUTATION_LOCK, (nullcontext() if storage_uri() else document_lock(_resolve_json_target_path())):
         imported_at = datetime.now(timezone.utc).isoformat()
-        base_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot()
+        base_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot(fresh=True)
         return _write_erp_products(
             list(index.values()),
             base_payload=base_payload,
@@ -1050,9 +1057,7 @@ def import_erp_payload(payload: Any, deployment_source: Dict[str, Any] | None = 
 
 
 def import_erp_file(file_path: str) -> Dict[str, Any]:
-    source = _resolve_candidate_file_path(file_path)
-    payload = _load_json_file(source)
-    source_metadata = _build_source_metadata(source)
+    payload, source_metadata = _read_erp_source(file_path)
     result = import_erp_payload(payload, deployment_source=source_metadata)
     result.update(source_metadata)
     return result
@@ -1061,8 +1066,16 @@ def import_erp_file(file_path: str) -> Dict[str, Any]:
 def _store_uploaded_file(filename: str, content: bytes) -> Dict[str, Any]:
     if len(content) > get_max_upload_size_bytes():
         raise ValueError("ERP upload too large")
-    _parse_json_bytes(content)
+    payload = _parse_json_bytes(content)
+    if not _build_index(payload):
+        raise ValueError("no valid product records with code found in ERP payload")
     safe_filename = _sanitize_json_filename(filename)
+    if storage_uri():
+        return erp_storage.store_inbox_file(safe_filename, content)
+    from .resource_limits import on_vercel
+    if on_vercel():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Configure o armazenamento compartilhado do ERP para enviar arquivos para revisão.")
     inbox_dir = resolve_erp_inbox_dir()
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1097,18 +1110,41 @@ def receive_erp_file(filename: str, content: bytes) -> Dict[str, Any]:
     return result
 
 
-def preview_erp_file(file_path: str) -> Dict[str, Any]:
+def _read_erp_source(file_path: str) -> tuple[Any, Dict[str, Any]]:
+    if file_path == storage_uri():
+        stored = load_remote_erp(fresh=True)
+        if stored is None:
+            raise ValueError("Active ERP file not found")
+        return _parse_json_bytes(stored.content), {
+            "source_path": file_path, "source_name": file_path.rsplit("/", 1)[-1],
+            "source_size_bytes": len(stored.content), "source_updated_at": stored.updated_at,
+        }
+    if file_path.startswith(erp_storage.INBOX_URI_PREFIX):
+        content, info = erp_storage.load_inbox_file(file_path)
+        return _parse_json_bytes(content), {
+            "source_path": info["path"], "source_name": info["name"],
+            "source_size_bytes": info["size_bytes"], "source_updated_at": info["updated_at"],
+        }
     source = _resolve_candidate_file_path(file_path)
-    payload = _load_json_file(source)
+    return _load_json_file(source), _build_source_metadata(source)
+
+
+def _same_erp_source(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if "://" in left or "://" in right:
+        return left == right
+    return Path(left).resolve(strict=False) == Path(right).resolve(strict=False)
+
+
+def preview_erp_file(file_path: str) -> Dict[str, Any]:
+    payload, source = _read_erp_source(file_path)
     active_path = _resolve_json_path()
-    active = active_path.resolve(strict=False)
-    active_payload = _load_existing_erp_payload()
+    # A review must compare against the latest active version across instances.
+    active_payload = payload if file_path == storage_uri() else _load_active_erp_snapshot(fresh=True)[0]
     active_meta = _extract_catalog_meta(active_payload)
-    deployed_source = _resolve_deployed_source_path(_extract_catalog_meta(_load_existing_erp_payload()))
-    resolved_source = source.resolve(strict=False)
     active_source = _stringify(active_meta.get("source_path"))
-    source_stat = source.stat()
-    compared_to_path = _stringify(active_meta.get("source_path"))
+    compared_to_path = active_source
     compared_to_name = _stringify(active_meta.get("source_name"))
 
     if not compared_to_path and active_path.is_file():
@@ -1118,33 +1154,26 @@ def preview_erp_file(file_path: str) -> Dict[str, Any]:
 
     return _build_preview_summary(
         payload,
-        source_path=str(source),
-        source_name=source.name,
-        source_size_bytes=source_stat.st_size,
-        source_updated_at=datetime.fromtimestamp(source_stat.st_mtime, tz=timezone.utc).isoformat(),
-        is_active=resolved_source == active
-        or bool(active_source and Path(active_source).resolve(strict=False) == resolved_source),
-        is_deployed_source=bool(deployed_source and resolved_source == deployed_source.resolve(strict=False)),
-        current_index=load_erp_index(),
+        **source,
+        is_active=_same_erp_source(source["source_path"], str(active_path))
+        or _same_erp_source(source["source_path"], storage_uri() or "")
+        or _same_erp_source(source["source_path"], active_source),
+        is_deployed_source=_same_erp_source(source["source_path"], active_source),
+        current_index=_build_index(active_payload) if active_payload else {},
         compared_to_path=compared_to_path,
         compared_to_name=compared_to_name,
     )
 
 
 def list_erp_files() -> List[Dict[str, Any]]:
+    active_payload, _, remote_missing, active_uri, remote_updated_at = _load_active_erp_snapshot()
+    active_meta = _extract_catalog_meta(active_payload)
     active_path = _resolve_json_path()
     active = active_path.resolve(strict=False)
-    deployed_source = _resolve_deployed_source_path(_extract_catalog_meta(_load_existing_erp_payload()))
-    seen: dict[Path, Path] = {}
-
-    for root in _resolve_erp_source_dirs():
-        if not root.is_dir():
-            continue
-        for pattern in DISCOVERY_PATTERNS:
-            for item in root.glob(pattern):
-                if not item.is_file():
-                    continue
-                seen[item.resolve(strict=False)] = item
+    remote_active = bool(active_uri and not remote_missing)
+    deployed_source = _resolve_deployed_source_path(active_meta)
+    inbox = resolve_erp_inbox_dir().resolve(strict=False)
+    seen = {item.resolve(strict=False): item for item in _discover_erp_source_files()}
 
     if active_path.is_file():
         seen[active] = active_path
@@ -1160,16 +1189,19 @@ def list_erp_files() -> List[Dict[str, Any]]:
                 "name": item.name,
                 "size_bytes": stat.st_size,
                 "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                "is_active": resolved == active,
+                "is_active": resolved == active and not remote_active,
+                "is_review": resolved.is_relative_to(inbox),
                 "is_deployed_source": bool(
                     deployed_source and resolved == deployed_source.resolve(strict=False)
                 ),
             }
         )
 
-    active_payload, _, remote_missing, active_uri, remote_updated_at = _load_active_erp_snapshot()
+    if active_uri:
+        for staged in erp_storage.list_inbox_files():
+            files.append({**staged, "is_active": False, "is_review": True,
+                "is_deployed_source": staged["path"] == active_meta.get("source_path")})
     if active_uri and not remote_missing:
-        active_meta = _extract_catalog_meta(active_payload)
         files.append(
             {
                 "path": active_uri,
@@ -1177,6 +1209,7 @@ def list_erp_files() -> List[Dict[str, Any]]:
                 "size_bytes": int(active_meta.get("source_size_bytes") or 0),
                 "updated_at": remote_updated_at or _stringify(active_meta.get("updated_at")) or "",
                 "is_active": True,
+                "is_review": False,
                 "is_deployed_source": False,
                 "source_path": _stringify(active_meta.get("source_path")) or None,
             }
@@ -1192,11 +1225,11 @@ def _normalize_active_payload(payload: Any) -> Dict[str, Any]:
     return {"products": _extract_records(payload)}
 
 
-def _load_active_erp_snapshot() -> tuple[Dict[str, Any], str | None, bool, str | None, str | None]:
+def _load_active_erp_snapshot(*, fresh: bool = False) -> tuple[Dict[str, Any], str | None, bool, str | None, str | None]:
     """Return active payload, remote ETag, remote-missing flag, URI, and update time."""
     active_uri = storage_uri()
     if active_uri:
-        remote = load_remote_erp()
+        remote = load_remote_erp(fresh=True) if fresh else load_remote_erp()
         if remote is not None:
             return (
                 _normalize_active_payload(_parse_json_bytes(remote.content)),
@@ -1341,8 +1374,8 @@ def upsert_erp_product(product: Dict[str, Any], code: str | None = None) -> Dict
     if not normalized:
         raise ValueError("invalid ERP product payload")
 
-    with _ERP_MUTATION_LOCK:
-        existing_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot()
+    with _ERP_MUTATION_LOCK, (nullcontext() if storage_uri() else document_lock(_resolve_json_target_path())):
+        existing_payload, etag, remote_expected_missing, _, _ = _load_active_erp_snapshot(fresh=True)
         try:
             index = _build_index(existing_payload)
         except ValueError:
@@ -1537,6 +1570,7 @@ def sort_products_by_category(products: List[Dict[str, Any]]) -> List[Dict[str, 
 
 
 def merge_products_with_erp(products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    products = deduplicate_products(products)
     erp_index = load_erp_index()
     if not erp_index:
         return products
@@ -1572,4 +1606,4 @@ def merge_products_with_erp(products: List[Dict[str, Any]]) -> List[Dict[str, An
         )
         normalized_categories.append(normalized)
 
-    return sort_products_by_category(normalized_categories)
+    return deduplicate_products(sort_products_by_category(normalized_categories))

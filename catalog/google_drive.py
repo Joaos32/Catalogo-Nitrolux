@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List
 import requests
 
 from .cache import cached
+from .resource_limits import check_export_budget, network_timeout, on_vercel, positive_limit, VERCEL_BODY_LIMIT
 from .local_catalog import IMG_EXTENSIONS
 from .product_media import _classify_variant, _match_filename
 
@@ -78,14 +79,29 @@ def fetch_google_drive_image(file_id: str, size: str = "detail") -> tuple[bytes,
     else:
         source_url = f"https://drive.google.com/uc?export=view&id={cleaned_id}"
 
-    upstream = requests.get(source_url, timeout=20)
-    upstream.raise_for_status()
-
-    media_type = (upstream.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-    if not media_type.startswith("image/"):
-        raise ValueError("Google Drive file is not an image")
-
-    return upstream.content, media_type
+    limit = min(
+        positive_limit("CATALOG_MEDIA_MAX_IMAGE_BYTES", 5 * 1024 * 1024),
+        positive_limit("CATALOG_EXPORT_MAX_REMOTE_IMAGE_BYTES", 5 * 1024 * 1024),
+    )
+    if on_vercel():
+        limit = min(limit, VERCEL_BODY_LIMIT)
+    upstream = requests.get(source_url, timeout=network_timeout(8), stream=True)
+    try:
+        upstream.raise_for_status()
+        media_type = (upstream.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        if not media_type.startswith("image/"):
+            raise ValueError("Google Drive file is not an image")
+        if int(upstream.headers.get("content-length") or 0) > limit:
+            raise ValueError("Google Drive image exceeds the size limit")
+        content = bytearray()
+        for chunk in upstream.iter_content(chunk_size=64 * 1024):
+            check_export_budget()
+            if len(content) + len(chunk) > limit:
+                raise ValueError("Google Drive image exceeds the size limit")
+            content.extend(chunk)
+        return bytes(content), media_type
+    finally:
+        upstream.close()
 
 
 def _is_image_file(item: Dict) -> bool:
@@ -277,10 +293,7 @@ def find_images_for_codes(codes: List[str], folder_id: str | None = None) -> Dic
     # recursive index for only the missing codes.
     missing_codes = [code for code in code_list if not matches_by_code.get(code)]
     if missing_codes:
-        try:
-            recursive_images = list_google_drive_images(folder_id=folder_id)
-        except Exception:
-            recursive_images = []
+        recursive_images = list_google_drive_images(folder_id=folder_id)
         for code in missing_codes:
             matches_by_code[code] = [
                 item
@@ -324,11 +337,26 @@ def categorize_photos_for_codes(codes: List[str], folder_id: str | None = None) 
             "ambient": None,
             "measures": None,
         }
-
+        fallback_urls: List[str] = []
         for image in images:
             variant = _classify_variant(str(image.get("name") or ""), code)
+            url = str(image.get("url") or "").strip()
+            if not url:
+                continue
             if variant in photos and not photos[variant]:
-                photos[variant] = str(image.get("url") or "") or None
+                photos[variant] = url
+            else:
+                fallback_urls.append(url)
+        # The detail gallery accepts unnumbered photos too. Use those same
+        # images for cards instead of reporting a product with photos as empty.
+        chosen = {url for url in photos.values() if url}
+        for field in ("white_background", "ambient", "measures"):
+            if photos[field]:
+                continue
+            fallback = next((url for url in fallback_urls if url not in chosen), None)
+            if fallback:
+                photos[field] = fallback
+                chosen.add(fallback)
         categorized[code] = photos
 
     return categorized

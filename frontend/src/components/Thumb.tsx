@@ -21,7 +21,7 @@ export function Thumb({ image, label }: ThumbProps): JSX.Element {
   return (
     <figure className={`thumb ${isUnavailable ? "is-unavailable" : ""}`}>
       {isUnavailable ? (
-        <div className="thumb-placeholder" role="img" aria-label={`Foto ${label.toLowerCase()} indisponível`}>
+        <div className="thumb-placeholder" role="img" aria-label={`${label} indisponível`}>
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
             <circle cx="9" cy="9" r="1.5" />
@@ -32,7 +32,7 @@ export function Thumb({ image, label }: ThumbProps): JSX.Element {
       ) : (
         <img
           src={imageUrl}
-          alt={`Foto ${label.toLowerCase()} do produto`}
+          alt={`${label} do produto`}
           loading="lazy"
           decoding="async"
           width="240"
@@ -52,9 +52,9 @@ interface ThumbStripProps {
 export function ThumbStrip({ photos }: ThumbStripProps): JSX.Element {
   return (
     <div className="thumb-strip" role="group" aria-label="Fotos do produto">
-      <Thumb image={photos?.white_background} label="Fundo branco" />
-      <Thumb image={photos?.measures} label="Medidas" />
-      <Thumb image={photos?.ambient} label="Ambientada" />
+      <Thumb image={photos?.white_background} label="Foto 1" />
+      <Thumb image={photos?.measures} label="Foto 2" />
+      <Thumb image={photos?.ambient} label="Foto 3" />
     </div>
   );
 }

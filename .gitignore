@@ -11,6 +11,7 @@ frontend/.env.*
 # Sensitive local access registries
 reports/admin_users.json
 reports/representative_users.json
+reports/online_users.json
 
 # Local editor/assistant state
 .claude/settings.local.json
@@ -61,3 +62,13 @@ reports/relatorio_fotos_estoque_4digitos.csv
 
 .vercel
 .env*
+reports/*.lock
+
+# Installed assistant skills and local audit/deployment evidence
+.agents/
+skills-lock.json
+/reports/*
+!/reports/catalog_runtime.json
+!/reports/erp_products.json
+!/reports/media_manifest.json
+!/reports/technical_specs.txt

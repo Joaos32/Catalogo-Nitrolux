@@ -1,5 +1,7 @@
-﻿import { type ChangeEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import TechnicalSheetPanel from "./TechnicalSheetPanel";
+import { useUnsavedChanges } from "../lib/use-unsaved-changes";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -7,6 +9,7 @@ import {
   createRepresentativePasswordReset,
   deleteRepresentativeUser,
   fetchAdminSession,
+  fetchOnlineRepresentatives,
   fetchErpFilePreview,
   fetchErpFiles,
   fetchErpProducts,
@@ -21,10 +24,12 @@ import {
 } from "../lib/catalog-api";
 import { normalizeText } from "../lib/catalog-products";
 import type {
+  ErpFileRecord,
   ErpPreviewChangeRecord,
   ErpPreviewChangeSummary,
   ProductRecord,
   RepresentativeAdminUser,
+  OnlineRepresentativesResponse,
 } from "../types";
 
 interface ErpProductDraft {
@@ -219,10 +224,13 @@ function getChangeDetails(change: ErpPreviewChangeRecord): string {
 }
 
 export default function ErpAdminPage(): JSX.Element {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [representativeSearch, setRepresentativeSearch] = useState("");
   const [draft, setDraft] = useState<ErpProductDraft>(EMPTY_DRAFT);
+  const [savedDraft, setSavedDraft] = useState<ErpProductDraft>(EMPTY_DRAFT);
+  const [savedRepresentativeDraft, setSavedRepresentativeDraft] = useState<RepresentativeDraft>(EMPTY_REPRESENTATIVE_DRAFT);
+  const [productListLimit, setProductListLimit] = useState(50);
   const [representativeDraft, setRepresentativeDraft] = useState<RepresentativeDraft>(EMPTY_REPRESENTATIVE_DRAFT);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyFilePath, setBusyFilePath] = useState("");
@@ -241,12 +249,32 @@ export default function ErpAdminPage(): JSX.Element {
   const [loginPassword, setLoginPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [activeAdminSection, setActiveAdminSection] = useState<"deploy" | "representatives" | "products">("deploy");
+  const [activeAdminSection, setActiveAdminSection] = useState<"deploy" | "representatives" | "products" | "technical" | "online">(() => new URLSearchParams(window.location.search).get("section") === "technical" ? "technical" : "deploy");
+
+  const productDirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  const representativeDirty = JSON.stringify(representativeDraft) !== JSON.stringify(savedRepresentativeDraft);
+  const hasUnsavedChanges = productDirty || representativeDirty;
+  useUnsavedChanges(hasUnsavedChanges);
+  const applyProductDraft = (next: ErpProductDraft) => { setDraft(next); setSavedDraft(next); };
+  const replaceProductDraft = (next: ErpProductDraft): boolean => {
+    if (isSaving) return false;
+    if (productDirty && !window.confirm("Descartar as alterações não salvas do produto?")) return false;
+    applyProductDraft(next);
+    return true;
+  };
+  const applyRepresentativeDraft = (next: RepresentativeDraft) => { setRepresentativeDraft(next); setSavedRepresentativeDraft(next); };
+  const replaceRepresentativeDraft = (next: RepresentativeDraft): boolean => {
+    if (isSavingRepresentative) return false;
+    if (representativeDirty && !window.confirm("Descartar as alterações não salvas do representante?")) return false;
+    applyRepresentativeDraft(next);
+    return true;
+  };
+  useEffect(() => { setProductListLimit(50); }, [search]);
 
   const sessionQuery = useQuery({ queryKey: ["admin-session"], queryFn: fetchAdminSession, retry: false });
   const protectionEnabled = Boolean(sessionQuery.data?.protection_enabled);
   const authenticated = Boolean(sessionQuery.data?.authenticated);
-  const canAccessPanel = authenticated || !protectionEnabled;
+  const canAccessPanel = sessionQuery.isSuccess && (authenticated || !protectionEnabled);
 
   const statusQuery = useQuery({ queryKey: ["erp-admin-status"], queryFn: () => fetchErpStatus(), enabled: canAccessPanel, retry: false });
   const filesQuery = useQuery({ queryKey: ["erp-admin-files"], queryFn: () => fetchErpFiles(), enabled: canAccessPanel, retry: false });
@@ -255,6 +283,13 @@ export default function ErpAdminPage(): JSX.Element {
     queryKey: ["erp-admin-representatives"],
     queryFn: () => fetchRepresentativeUsers(),
     enabled: canAccessPanel,
+    retry: false,
+  });
+  const onlineUsersQuery = useQuery<OnlineRepresentativesResponse>({
+    queryKey: ["erp-admin-online-users"],
+    queryFn: fetchOnlineRepresentatives,
+    enabled: canAccessPanel && activeAdminSection === "online",
+    refetchInterval: (query) => query.state.data?.tracking_available === false ? false : 30_000,
     retry: false,
   });
   const previewQuery = useQuery({
@@ -275,6 +310,13 @@ export default function ErpAdminPage(): JSX.Element {
     if (!normalizedSearch) return products;
     return products.filter((product) => buildSearchBlob(product).includes(normalizedSearch));
   }, [products, search]);
+  const filteredRepresentativeUsers = useMemo(() => {
+    const normalizedSearch = normalizeText(representativeSearch);
+    if (!normalizedSearch) return representativeUsers;
+    return representativeUsers.filter((user) =>
+      normalizeText(`${user.name} ${user.email}`).includes(normalizedSearch)
+    );
+  }, [representativeSearch, representativeUsers]);
   const selectedFile = useMemo(() => files.find((file) => file.path === selectedFilePath) || null, [files, selectedFilePath]);
   const representativeSummary = representativeUsersQuery.data;
   const selectedRepresentative = useMemo(
@@ -284,19 +326,19 @@ export default function ErpAdminPage(): JSX.Element {
   );
 
   useEffect(() => {
-    if (!canAccessPanel) return;
-    if (files.length === 0) {
-      if (selectedFilePath) setSelectedFilePath("");
-      return;
-    }
-    if (files.some((file) => file.path === selectedFilePath)) return;
-    const preferred = files.find((file) => file.is_deployed_source) || files.find((file) => file.is_active) || files[0];
+    // A refresh may still contain the previous file list after a new upload.
+    // Only choose a default; never replace an explicitly selected review.
+    if (!canAccessPanel || selectedFilePath || !filesQuery.isSuccess) return;
+    const preferred = files.find((file) => (file.is_review || file.path.startsWith("erp-inbox://")) && !file.is_active)
+      || files.find((file) => file.is_deployed_source)
+      || files.find((file) => file.is_active)
+      || files[0];
     if (preferred?.path) setSelectedFilePath(preferred.path);
-  }, [canAccessPanel, files, selectedFilePath]);
+  }, [canAccessPanel, files, filesQuery.isSuccess, selectedFilePath]);
 
-  const refreshAdminData = async () => {
+  const refreshAdminData = async (refreshSession = true) => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["admin-session"] }),
+      ...(refreshSession ? [queryClient.invalidateQueries({ queryKey: ["admin-session"] })] : []),
       queryClient.invalidateQueries({ queryKey: ["erp-admin-status"] }),
       queryClient.invalidateQueries({ queryKey: ["erp-admin-files"] }),
       queryClient.invalidateQueries({ queryKey: ["erp-admin-products"] }),
@@ -311,10 +353,13 @@ export default function ErpAdminPage(): JSX.Element {
 
   const handleActivateFile = async (filePath: string, label: string) => {
     if (!filePath) return;
+    if (!window.confirm(`Implantar ${label} substituirá o catálogo ativo.${hasUnsavedChanges ? " Alterações não salvas serão descartadas." : ""} Continuar?`)) return;
     setBusyFilePath(filePath);
     setNotice(null);
     try {
       const result = await importErpFileFromPath(filePath);
+      applyProductDraft(EMPTY_DRAFT);
+      applyRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
       await refreshAdminData();
       setSelectedFilePath(filePath);
       setNotice({ tone: "success", text: `${label} foi implantado com ${result.products_imported} produtos.` });
@@ -335,9 +380,15 @@ export default function ErpAdminPage(): JSX.Element {
     try {
       const result = await stageErpJsonFile(file);
       queryClient.setQueryData(["erp-file-preview", result.path], result);
+      queryClient.setQueryData<ErpFileRecord[]>(["erp-admin-files"], (current = []) => [
+        { ...result, updated_at: result.updated_at || "", is_review: true }, ...current.filter((item) => item.path !== result.path),
+      ]);
       setSelectedFilePath(result.path);
       await refreshAdminData();
-      setNotice({ tone: "success", text: `${file.name} foi enviado para revisão. Confira a prévia e implante quando estiver pronto.` });
+      const changes = result.change_summary;
+      setNotice({ tone: "success", text: changes
+        ? `${file.name} foi enviado para revisão: ${changes.added_count} novos, ${changes.updated_count} atualizados e ${changes.removed_count} removidos. Confira a prévia antes de implantar.`
+        : `${file.name} foi enviado para revisão. Atualize a comparação para consultar as quantidades.` });
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 401) await handleUnauthorized();
       setNotice({ tone: "warning", text: getErrorMessage(error, "Não foi possível enviar o JSON para revisão.") });
@@ -357,7 +408,7 @@ export default function ErpAdminPage(): JSX.Element {
     try {
       const result = await saveErpProduct(code, buildPayloadFromDraft(draft));
       await refreshAdminData();
-      setDraft(productToDraft(result.product));
+      applyProductDraft(productToDraft(result.product));
       setNotice({ tone: "success", text: result.created ? `Produto ${code} incluído com sucesso no JSON ativo.` : `Produto ${code} atualizado com sucesso no JSON ativo.` });
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 401) await handleUnauthorized();
@@ -368,7 +419,7 @@ export default function ErpAdminPage(): JSX.Element {
   };
 
   const resetRepresentativeDraft = () => {
-    setRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
+    applyRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
   };
 
   const handleSaveRepresentative = async () => {
@@ -404,7 +455,7 @@ export default function ErpAdminPage(): JSX.Element {
         is_admin: representativeDraft.isAdmin,
       });
       await refreshAdminData();
-      setRepresentativeDraft({
+      applyRepresentativeDraft({
         currentEmail: result.user.email,
         email: result.user.email,
         name: result.user.name,
@@ -502,10 +553,19 @@ export default function ErpAdminPage(): JSX.Element {
     setIsLoggingIn(true);
     setNotice(null);
     try {
-      await loginAdminWithPassword(email, password);
+      const login = await loginAdminWithPassword(email, password);
+      if (!login.authenticated) {
+        throw new Error("Não foi possível confirmar sua sessão administrativa. Tente novamente.");
+      }
+      // Confirm the browser retained the cookie before clearing credentials or announcing success.
+      const verifiedSession = await sessionQuery.refetch();
+      if (verifiedSession.error) throw verifiedSession.error;
+      if (!verifiedSession.data?.authenticated) {
+        throw new Error("Sua sessão não foi mantida. Verifique se os cookies estão habilitados e tente novamente.");
+      }
       setLoginEmail("");
       setLoginPassword("");
-      await refreshAdminData();
+      await refreshAdminData(false);
       setNotice({ tone: "success", text: "Login realizado com sucesso." });
     } catch (error) {
       setNotice({ tone: "warning", text: getErrorMessage(error, "Não foi possível entrar no painel.") });
@@ -515,11 +575,12 @@ export default function ErpAdminPage(): JSX.Element {
   };
 
   const handleLogout = async () => {
+    if (hasUnsavedChanges && !window.confirm("Sair e descartar as alterações não salvas?")) return;
     setIsLoggingOut(true);
     setNotice(null);
     try {
       await logoutAdminSession();
-      setDraft(EMPTY_DRAFT);
+      applyProductDraft(EMPTY_DRAFT);
       resetRepresentativeDraft();
       setSelectedFilePath("");
       await refreshAdminData();
@@ -538,7 +599,7 @@ export default function ErpAdminPage(): JSX.Element {
         filesQuery.isLoading ||
         productsQuery.isLoading ||
         representativeUsersQuery.isLoading));
-  const previewLoading = previewQuery.isLoading || previewQuery.isFetching;
+  const previewLoading = previewQuery.isLoading || (previewQuery.isFetching && !previewQuery.data);
   const combinedError = [statusQuery, filesQuery, previewQuery, productsQuery, representativeUsersQuery]
     .filter((query) => query.isError)
     .map((query) => getErrorMessage(query.error, "Falha ao carregar dados administrativos."))
@@ -552,11 +613,12 @@ export default function ErpAdminPage(): JSX.Element {
       title: string;
       emptyTitle: string;
       emptyCopy: string;
+      isReview?: boolean;
     }
   ): JSX.Element => {
     if (!summary) {
       return (
-        <section className="admin-change-section">
+        <section className="admin-change-section" aria-label={options.title}>
           <div className="admin-change-head">
             <div>
               <p className="admin-eyebrow">{options.eyebrow}</p>
@@ -565,38 +627,39 @@ export default function ErpAdminPage(): JSX.Element {
           </div>
           <div className="admin-status-box">
             <span className="admin-status-label">Resumo</span>
-            <strong>{options.emptyTitle}</strong>
-            <span className="admin-status-meta">{options.emptyCopy}</span>
+            <strong>{options.isReview ? "Comparação indisponível" : options.emptyTitle}</strong>
+            <span className="admin-status-meta">{options.isReview ? "Atualize a comparação para consultar as quantidades antes de implantar." : options.emptyCopy}</span>
           </div>
+          {options.isReview && <button type="button" className="export-button is-secondary" onClick={() => void previewQuery.refetch()} disabled={previewQuery.isFetching}>Atualizar comparação</button>}
         </section>
       );
     }
 
     return (
-      <section className="admin-change-section">
+      <section className={`admin-change-section${options.isReview ? " admin-review-change-section" : ""}`} aria-label={options.title}>
         <div className="admin-change-head">
           <div>
             <p className="admin-eyebrow">{options.eyebrow}</p>
             <h3>{options.title}</h3>
           </div>
         </div>
-        <div className="admin-preview-grid">
-          <div className="admin-status-box">
+        <div className="admin-preview-grid admin-change-counts">
+          <div className="admin-status-box" data-change-kind="added">
             <span className="admin-status-label">Novos</span>
             <strong>{summary.added_count}</strong>
             <span className="admin-status-meta">Entram pela primeira vez no catálogo.</span>
           </div>
-          <div className="admin-status-box">
+          <div className="admin-status-box" data-change-kind="updated">
             <span className="admin-status-label">Atualizados</span>
             <strong>{summary.updated_count}</strong>
             <span className="admin-status-meta">Já existiam e tiveram campos alterados.</span>
           </div>
-          <div className="admin-status-box">
+          <div className="admin-status-box" data-change-kind="removed">
             <span className="admin-status-label">Removidos</span>
             <strong>{summary.removed_count}</strong>
             <span className="admin-status-meta">Estão no catálogo ativo e não vieram neste JSON.</span>
           </div>
-          <div className="admin-status-box">
+          <div className="admin-status-box" data-change-kind="unchanged">
             <span className="admin-status-label">Sem alteração</span>
             <strong>{summary.unchanged_count}</strong>
             <span className="admin-status-meta">Permanecem iguais em relação ao ativo.</span>
@@ -646,7 +709,7 @@ export default function ErpAdminPage(): JSX.Element {
             <p className="hero-brand-subtitle">Revisão, implantação e manutenção do arquivo ativo</p>
           </div>
           <div className="hero-admin-actions">
-            <button type="button" className="hero-link-button" onClick={() => navigate("/")}>Voltar ao catálogo</button>
+            <Link className="hero-link-button" to="/">Voltar ao catálogo</Link>
             {authenticated && <button type="button" className="hero-link-button" onClick={() => void handleLogout()} disabled={isLoggingOut}>{isLoggingOut ? "Saindo..." : "Sair do painel"}</button>}
           </div>
         </div>
@@ -664,7 +727,8 @@ export default function ErpAdminPage(): JSX.Element {
           Boolean(busyRepresentativeEmail)
         }
       >
-        {notice && <div className={`banner banner-${notice.tone}`}>{notice.text}</div>}
+        {hasUnsavedChanges && <p className="unsaved-notice" role="status">Alterações não salvas em {productDirty && representativeDirty ? "produto e representante" : productDirty ? "produto" : "representante"}.</p>}
+        {notice && <div role={notice.tone === "warning" ? "alert" : "status"} className={`banner banner-${notice.tone}`}>{notice.text}</div>}
         {!canAccessPanel ? (
           <section className="admin-auth-shell">
             <article className="admin-panel admin-auth-panel">
@@ -716,9 +780,32 @@ export default function ErpAdminPage(): JSX.Element {
                 <span>Produtos</span>
                 <small>Editar JSON ativo</small>
               </button>
+              <button type="button" className={activeAdminSection === "technical" ? "is-active" : ""} onClick={() => setActiveAdminSection("technical")}>
+                <span>Dados técnicos</span>
+                <small>Ler planilha Excel</small>
+              </button>
+              <button type="button" className={activeAdminSection === "online" ? "is-active" : ""} onClick={() => setActiveAdminSection("online")}>
+                <span>Usuários online</span>
+                <small>Acompanhar acessos ativos</small>
+              </button>
             </nav>
+            {activeAdminSection === "technical" && (
+              <TechnicalSheetPanel onApplied={async () => {
+                await Promise.all([
+                  refreshAdminData(false),
+                  queryClient.invalidateQueries({ queryKey: ["catalog-products"] }),
+                ]);
+              }} onUnauthorized={handleUnauthorized} />
+            )}
             {activeAdminSection === "deploy" && (
               <>
+            <section className="admin-panel admin-excel-entry" aria-labelledby="admin-excel-entry-title">
+              <div>
+                <h2 id="admin-excel-entry-title">Importar dados técnicos do Excel</h2>
+                <p>Anexe a planilha dos produtos e confira os dados antes de aplicar.</p>
+              </div>
+              <button type="button" className="export-button" onClick={() => setActiveAdminSection("technical")}>Anexar planilha Excel</button>
+            </section>
             <section className="admin-grid admin-grid-deploy">
               <article className="admin-panel admin-summary-panel">
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Implantação</p><h2>Controle do ambiente</h2></div></div>
@@ -738,25 +825,28 @@ export default function ErpAdminPage(): JSX.Element {
                 <div className="admin-inline-actions">
                   <button type="button" className="export-button" onClick={() => void refreshAdminData()}>Atualizar dados</button>
                   <label className={`export-button admin-upload-button ${isUploading ? "is-disabled" : ""}`}><input type="file" accept=".json,application/json" onChange={(event) => void handleStageFileUpload(event)} disabled={isUploading} />{isUploading ? "Enviando JSON..." : "Enviar JSON para revisão"}</label>
-                  <button type="button" className="export-button is-secondary" onClick={() => { setDraft(EMPTY_DRAFT); setNotice(null); setActiveAdminSection("products"); }}>Novo produto</button>
+                  <button type="button" className="export-button is-secondary" onClick={() => { if (!replaceProductDraft(EMPTY_DRAFT)) return; setNotice(null); setActiveAdminSection("products"); }}>Novo produto</button>
                 </div>
               </article>
               <article className="admin-panel admin-preview-panel">
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Prévia</p><h2>{selectedFile?.name || previewQuery.data?.name || "Selecione um arquivo"}</h2></div></div>
+                {previewQuery.isFetching && previewQuery.data && <p role="status" className="admin-status-meta">Atualizando comparação...</p>}
                 {!selectedFilePath ? <div className="empty-state compact-empty"><h2>Nenhum arquivo selecionado</h2><p>Escolha um JSON da fila para validar a implantação.</p></div> : previewLoading ? <section className="loading-state">Carregando prévia do JSON selecionado...</section> : previewQuery.data ? <>
+                  {renderChangeSummarySection(previewQuery.data.change_summary, {
+                    eyebrow: "Resumo da revisão",
+                    title: "O que este JSON vai alterar",
+                    isReview: true,
+                    emptyTitle: "Nenhuma mudança detectada",
+                    emptyCopy: "Se você implantar este arquivo agora, o catálogo ativo permanece igual.",
+                  })}
                   <div className="admin-preview-grid">
                     <div className="admin-status-box"><span className="admin-status-label">Arquivo</span><strong>{previewQuery.data.path}</strong><span className="admin-status-meta">{formatBytes(previewQuery.data.size_bytes)} | atualizado em {formatDateTime(previewQuery.data.updated_at)}</span></div>
                     <div className="admin-status-box"><span className="admin-status-label">Validação</span><strong>{previewQuery.data.products_loaded} produtos válidos</strong><span className="admin-status-meta">{previewQuery.data.records_detected} registros, {previewQuery.data.ignored_records} ignorados</span></div>
                   </div>
-                  {renderChangeSummarySection(previewQuery.data.change_summary, {
-                    eyebrow: "Comparação",
-                    title: "O que este JSON vai alterar",
-                    emptyTitle: "Nenhuma mudança detectada",
-                    emptyCopy: "Se você implantar este arquivo agora, o catálogo ativo permanece igual.",
-                  })}
+
                   <div className="admin-chip-row">{previewQuery.data.categories.map((category) => <span key={`${category.name}-${category.count}`} className="admin-category-chip">{category.name} ({category.count})</span>)}</div>
                   <div className="admin-sample-table" role="list">{previewQuery.data.sample_products.map((product) => <article key={`${product.Codigo}-${product.Nome}`} className="admin-sample-row" role="listitem"><div><strong>{product.Nome}</strong><span>{product.Categoria}</span></div><small>#{product.Codigo}</small></article>)}</div>
-                  <div className="admin-inline-actions"><button type="button" className="export-button" disabled={busyFilePath === selectedFilePath || selectedFile?.is_active} onClick={() => void handleActivateFile(selectedFilePath, previewQuery.data?.name || "O JSON selecionado")}>{busyFilePath === selectedFilePath ? "Implantando..." : selectedFile?.is_active ? "Arquivo ativo" : previewQuery.data.is_deployed_source ? "Reimplantar este JSON" : "Implantar este JSON"}</button></div>
+                  <div className="admin-inline-actions"><button type="button" className="export-button" disabled={busyFilePath === selectedFilePath || selectedFile?.is_active || previewQuery.isFetching || !previewQuery.data.change_summary} onClick={() => void handleActivateFile(selectedFilePath, previewQuery.data?.name || "O JSON selecionado")}>{busyFilePath === selectedFilePath ? "Implantando..." : selectedFile?.is_active ? "Arquivo ativo" : previewQuery.data.is_deployed_source ? "Reimplantar este JSON" : "Implantar este JSON"}</button></div>
                 </> : <div className="empty-state compact-empty"><h2>Prévia indisponível</h2><p>Selecione outro arquivo ou atualize os dados para tentar novamente.</p></div>}
               </article>
             </section>
@@ -782,7 +872,9 @@ export default function ErpAdminPage(): JSX.Element {
                   <span className="result-summary">
                     {representativeUsersQuery.isLoading
                       ? "Carregando..."
-                      : `${representativeSummary?.total_users ?? 0} representantes`}
+                      : representativeSearch.trim()
+                        ? `${filteredRepresentativeUsers.length} de ${representativeSummary?.total_users ?? 0} representantes`
+                        : `${representativeSummary?.total_users ?? 0} representantes`}
                   </span>
                 </div>
                 <p className="admin-auth-copy">
@@ -824,9 +916,18 @@ export default function ErpAdminPage(): JSX.Element {
                     </span>
                   </div>
                 )}
+                <label className="field search-field">
+                  <span>Buscar representante</span>
+                  <input
+                    type="search"
+                    value={representativeSearch}
+                    onChange={(event) => setRepresentativeSearch(event.target.value)}
+                    placeholder="Nome ou e-mail"
+                  />
+                </label>
                 <div className="admin-file-list" role="list">
-                  {representativeUsers.length > 0 ? (
-                    representativeUsers.map((user) => {
+                  {filteredRepresentativeUsers.length > 0 ? (
+                    filteredRepresentativeUsers.map((user) => {
                       const isSelected = representativeDraft.currentEmail === user.email;
                       const isDeleting = busyRepresentativeEmail === user.email;
                       const isCreatingReset = busyPasswordResetEmail === user.email;
@@ -872,7 +973,7 @@ export default function ErpAdminPage(): JSX.Element {
                                   type="button"
                                   className="export-button is-secondary"
                                   onClick={() => {
-                                    setRepresentativeDraft(representativeToDraft(user));
+                                    if (!replaceRepresentativeDraft(representativeToDraft(user))) return;
                                     setNotice({ tone: "info", text: `Representante ${user.email} carregado para edição.` });
                                   }}
                                 >
@@ -918,7 +1019,11 @@ export default function ErpAdminPage(): JSX.Element {
                   ) : (
                     <div className="empty-state compact-empty">
                       <h2>Nenhum representante encontrado</h2>
-                      <p>Use o formulário ao lado para liberar o primeiro acesso ao catálogo.</p>
+                      <p>
+                        {representativeUsers.length > 0
+                          ? "Tente buscar por outro nome ou e-mail."
+                          : "Use o formulário ao lado para liberar o primeiro acesso ao catálogo."}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -937,7 +1042,7 @@ export default function ErpAdminPage(): JSX.Element {
                 <p className="admin-auth-copy">
                   O e-mail vira o login do representante. Em edições, deixe a senha em branco para manter a atual.
                 </p>
-                <div className="admin-form-grid">
+                <fieldset className="admin-form-grid editor-fields" disabled={isSavingRepresentative}>
                   <label className="field field-span-2">
                     <span>E-mail de acesso</span>
                     <input
@@ -994,7 +1099,7 @@ export default function ErpAdminPage(): JSX.Element {
                       autoComplete={representativeDraft.currentEmail ? "new-password" : "current-password"}
                     />
                   </label>
-                </div>
+                </fieldset>
                 {selectedRepresentative && !selectedRepresentative.managed && (
                   <div className="admin-status-box">
                     <span className="admin-status-label">Somente leitura</span>
@@ -1021,8 +1126,7 @@ export default function ErpAdminPage(): JSX.Element {
                     type="button"
                     className="export-button is-secondary"
                     onClick={() => {
-                      resetRepresentativeDraft();
-                      setNotice(null);
+                      if (replaceRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT)) setNotice(null);
                     }}
                     disabled={isSavingRepresentative}
                   >
@@ -1038,18 +1142,19 @@ export default function ErpAdminPage(): JSX.Element {
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Produtos do JSON ativo</p><h2>Lista para edição</h2></div><span className="result-summary">{productsQuery.isLoading ? "Carregando..." : `${filteredProducts.length} itens no recorte`}</span></div>
                 <label className="field search-field"><span>Buscar produto no JSON ativo</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Código, nome ou categoria" /></label>
                 <div className="admin-product-list" role="list">
-                  {filteredProducts.map((product) => {
+                  {filteredProducts.slice(0, productListLimit).map((product) => {
                     const code = getRecordField(product, ["Codigo"]);
                     const name = getRecordField(product, ["Nome"]) || `Produto ${code}`;
                     const category = getRecordField(product, ["Categoria"]) || "Sem categoria";
                     const isCurrentDraft = draft.code.trim() === code && Boolean(code);
-                    return <button key={code || name} type="button" className={`admin-product-item ${isCurrentDraft ? "is-selected" : ""}`} onClick={() => { setDraft(productToDraft(product)); setNotice({ tone: "info", text: `Produto ${code} carregado para edição.` }); }} role="listitem"><div><strong>{name}</strong><span>{category}</span></div><small>#{code || "sem código"}</small></button>;
+                    return <div key={code || name} role="listitem"><button type="button" className={`admin-product-item ${isCurrentDraft ? "is-selected" : ""}`} onClick={() => { if (!replaceProductDraft(productToDraft(product))) return; setNotice({ tone: "info", text: `Produto ${code} carregado para edição.` }); }}><div><strong>{name}</strong><span>{category}</span></div><small>#{code || "sem código"}</small></button></div>;
                   })}
                 </div>
+                {filteredProducts.length > productListLimit && <button type="button" className="export-button" onClick={() => setProductListLimit((current) => current + 50)}>Carregar mais produtos da lista ({filteredProducts.length - productListLimit} restantes)</button>}
               </article>
               <article className="admin-panel admin-form-panel">
                 <div className="admin-panel-head"><div><p className="admin-eyebrow">Produto</p><h2>{draft.code.trim() ? `Edição do código ${draft.code.trim()}` : "Novo produto"}</h2></div></div>
-                <div className="admin-form-grid">
+                <fieldset className="admin-form-grid editor-fields" disabled={isSaving}>
                   <label className="field"><span>Código</span><input type="text" value={draft.code} onChange={(event) => setDraft((current) => ({ ...current, code: event.target.value }))} placeholder="Ex.: 8877" /></label>
                   <label className="field"><span>Categoria</span><input type="text" value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Ex.: ILUMINACAO TECNICA" /></label>
                   <label className="field field-span-2"><span>Nome</span><input type="text" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nome comercial do produto" /></label>
@@ -1062,10 +1167,69 @@ export default function ErpAdminPage(): JSX.Element {
                   <label className="field"><span>CODEPTO</span><input type="text" value={draft.deptCode} onChange={(event) => setDraft((current) => ({ ...current, deptCode: event.target.value }))} placeholder="Código do departamento" /></label>
                   <label className="field"><span>CODSEC</span><input type="text" value={draft.sectionCode} onChange={(event) => setDraft((current) => ({ ...current, sectionCode: event.target.value }))} placeholder="Código da seção" /></label>
                   <label className="field field-span-2"><span>Atributos extras em JSON</span><textarea rows={10} value={draft.extraJson} onChange={(event) => setDraft((current) => ({ ...current, extraJson: event.target.value }))} placeholder='{"voltagem":"220V","CODAUXILIAR":"789..."}' /></label>
-                </div>
-                <div className="admin-inline-actions"><button type="button" className="export-button" onClick={() => void handleSaveProduct()} disabled={isSaving}>{isSaving ? "Salvando..." : "Salvar no JSON"}</button><button type="button" className="export-button is-secondary" onClick={() => { setDraft(EMPTY_DRAFT); setNotice(null); }} disabled={isSaving}>Limpar formulário</button></div>
+                </fieldset>
+                <div className="admin-inline-actions"><button type="button" className="export-button" onClick={() => void handleSaveProduct()} disabled={isSaving}>{isSaving ? "Salvando..." : "Salvar no JSON"}</button><button type="button" className="export-button is-secondary" onClick={() => { if (replaceProductDraft(EMPTY_DRAFT)) setNotice(null); }} disabled={isSaving}>Limpar formulário</button></div>
               </article>
             </section>
+            )}
+            {activeAdminSection === "online" && (
+              <section className="admin-panel admin-online-panel">
+                <div className="admin-panel-head">
+                  <div>
+                    <p className="admin-eyebrow">Acompanhamento</p>
+                    <h2>Usuários online</h2>
+                  </div>
+                  <span className="result-summary">
+                    {onlineUsersQuery.data?.tracking_available === false
+                      ? "Acompanhamento desativado"
+                      : onlineUsersQuery.isLoading
+                      ? "Carregando..."
+                      : `${onlineUsersQuery.data?.total_online ?? 0} online agora`}
+                  </span>
+                </div>
+                <p className="admin-auth-copy" hidden={onlineUsersQuery.data?.tracking_available === false}>
+                  O painel atualiza a lista a cada 30 segundos. Um representante aparece como online quando envia atividade nos últimos {Math.ceil((onlineUsersQuery.data?.online_window_seconds ?? 300) / 60)} minutos.
+                </p>
+                {onlineUsersQuery.isError ? (
+                  <div className="admin-status-box">
+                    <strong>Não foi possível carregar os usuários online.</strong>
+                    <span className="admin-status-meta">{getErrorMessage(onlineUsersQuery.error, "Tente novamente em instantes.")}</span>
+                    <div className="admin-inline-actions">
+                      <button type="button" className="export-button is-secondary" onClick={() => void onlineUsersQuery.refetch()}>
+                        Tentar novamente
+                      </button>
+                    </div>
+                  </div>
+                ) : onlineUsersQuery.isLoading ? (
+                  <div className="empty-state compact-empty"><p>Carregando atividade recente...</p></div>
+                ) : onlineUsersQuery.data?.tracking_available === false ? (
+                  <div className="empty-state compact-empty">
+                    <h2>Acompanhamento online desativado</h2>
+                    <p>O acompanhamento será ativado quando o armazenamento compartilhado estiver configurado.</p>
+                  </div>
+                ) : (onlineUsersQuery.data?.users.length ?? 0) > 0 ? (
+                  <div className="admin-online-user-list" role="list" aria-label="Representantes online">
+                    {onlineUsersQuery.data?.users.map((user) => (
+                      <article key={user.email} className="admin-online-user-row" role="listitem">
+                        <span className="admin-online-user-dot" aria-hidden="true" />
+                        <div className="admin-online-user-copy">
+                          <strong>{user.name}</strong>
+                          <span>{user.email}</span>
+                        </div>
+                        <small>Ativo às {formatDateTime(user.last_seen_at)}</small>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state compact-empty">
+                    <h2>Nenhum usuário online</h2>
+                    <p>Ninguém enviou atividade ao catálogo nos últimos {Math.ceil((onlineUsersQuery.data?.online_window_seconds ?? 300) / 60)} minutos.</p>
+                  </div>
+                )}
+                {onlineUsersQuery.data?.checked_at && (
+                  <span className="admin-status-meta">Consulta atualizada em {formatDateTime(onlineUsersQuery.data.checked_at)}.</span>
+                )}
+              </section>
             )}
           </>
         )}

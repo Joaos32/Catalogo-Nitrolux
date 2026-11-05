@@ -1,10 +1,10 @@
-﻿import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { useRepresentativeSession } from "../lib/use-representative-session";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
   ApiRequestError,
-  fetchRepresentativeSession,
   loginRepresentative,
   resetRepresentativePassword,
 } from "../lib/catalog-api";
@@ -22,6 +22,9 @@ function sanitizeNextPath(value: string | null): string {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
+    if (error.status === 503) {
+      return "O serviço de acesso está temporariamente indisponível. Tente novamente mais tarde.";
+    }
     if (error.status === 403 || /invalid representative credentials/i.test(error.message)) {
       return "E-mail ou senha incorretos. Confira os dados ou use a recuperação de senha.";
     }
@@ -33,6 +36,9 @@ function getErrorMessage(error: unknown): string {
 
 export default function RepresentativeLoginPage(): JSX.Element {
   const navigate = useNavigate();
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const confirmationRef = useRef<HTMLInputElement>(null);
+  const [confirmationError, setConfirmationError] = useState("");
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
@@ -44,12 +50,12 @@ export default function RepresentativeLoginPage(): JSX.Element {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (notice?.tone === "warning") noticeRef.current?.focus();
+  }, [notice]);
+
   const nextPath = sanitizeNextPath(searchParams.get("next"));
-  const sessionQuery = useQuery({
-    queryKey: ["representative-session"],
-    queryFn: fetchRepresentativeSession,
-    retry: false,
-  });
+  const sessionQuery = useRepresentativeSession();
 
   if (sessionQuery.isLoading) {
     return (
@@ -80,6 +86,7 @@ export default function RepresentativeLoginPage(): JSX.Element {
   }
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedPassword = password.trim();
 
@@ -106,6 +113,8 @@ export default function RepresentativeLoginPage(): JSX.Element {
   };
 
   const handlePasswordReset = async () => {
+    if (isSubmitting) return;
+    setConfirmationError("");
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedCode = resetCode.trim();
     const normalizedPassword = newPassword.trim();
@@ -124,7 +133,8 @@ export default function RepresentativeLoginPage(): JSX.Element {
       return;
     }
     if (normalizedPassword !== normalizedConfirmation) {
-      setNotice({ tone: "warning", text: "A confirmação precisa ser igual à nova senha." });
+      setConfirmationError("A confirmação precisa ser igual à nova senha.");
+      confirmationRef.current?.focus();
       return;
     }
 
@@ -147,28 +157,48 @@ export default function RepresentativeLoginPage(): JSX.Element {
 
   return (
     <div className="page-shell auth-page-shell">
+      <a className="skip-link" href="#login-content">
+        Pular para o login
+      </a>
       <div className="bg-orb orb-a" aria-hidden="true"></div>
       <div className="bg-orb orb-b" aria-hidden="true"></div>
 
       <header className="hero auth-hero">
         <div className="hero-identity">
+          <h1 className="sr-only">Acesso ao catálogo</h1>
           <div className="hero-kicker">Acesso para representantes</div>
           <div className="hero-brand" aria-label="Acesso restrito ao catálogo">
             <p className="hero-brand-name">ÁREA COMERCIAL</p>
-            <p className="hero-brand-subtitle">Entre com seu login para acessar o catálogo completo</p>
+            <p className="hero-brand-subtitle">
+              Entre com seu login para acessar o catálogo completo
+            </p>
           </div>
         </div>
       </header>
 
-      <main className="content-wrap admin-content" aria-busy={isSubmitting}>
-        {notice && <div className={`banner banner-${notice.tone}`}>{notice.text}</div>}
+      <main
+        id="login-content"
+        tabIndex={-1}
+        className="content-wrap admin-content"
+        aria-busy={isSubmitting}
+      >
+        {notice && (
+          <div
+            ref={noticeRef}
+            tabIndex={-1}
+            role={notice.tone === "warning" ? "alert" : "status"}
+            className={`banner banner-${notice.tone}`}
+          >
+            {notice.text}
+          </div>
+        )}
 
         <section className="admin-auth-shell">
           <article className="admin-panel admin-auth-panel auth-panel">
             <div className="admin-panel-head">
               <div>
-                <p className="admin-eyebrow">Login JWT</p>
-                <h2>Entrar no catálogo</h2>
+                <p className="admin-eyebrow">Área comercial</p>
+                <h2>{mode === "login" ? "Entrar no catálogo" : "Recuperar acesso"}</h2>
               </div>
             </div>
 
@@ -178,96 +208,126 @@ export default function RepresentativeLoginPage(): JSX.Element {
                 : "Use o código de recuperação fornecido pelo administrador e defina uma nova senha."}
             </p>
 
-            <label className="field">
-              <span>E-mail</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="representante@empresa.com"
-                autoComplete="username"
-              />
-            </label>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void (mode === "login" ? handleSubmit() : handlePasswordReset());
+              }}
+            >
+              <fieldset className="auth-fields" disabled={isSubmitting}>
+                <label className="field">
+                  <span>E-mail</span>
+                  <input
+                    type="email"
+                    name="email"
+                    required
+                    spellCheck={false}
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="representante@empresa.com"
+                    autoComplete="username"
+                  />
+                </label>
 
-            {mode === "login" ? (
-              <label className="field">
-                <span>Senha</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Informe sua senha"
-                  autoComplete="current-password"
-                />
-              </label>
-            ) : (
-              <>
-                <label className="field">
-                  <span>Código de recuperação</span>
-                  <input
-                    type="text"
-                    value={resetCode}
-                    onChange={(event) => setResetCode(event.target.value)}
-                    placeholder="Código fornecido pelo administrador"
-                    autoComplete="one-time-code"
-                  />
-                </label>
-                <label className="field">
-                  <span>Nova senha</span>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                    placeholder="Defina a nova senha"
-                    autoComplete="new-password"
-                  />
-                </label>
-                <label className="field">
-                  <span>Confirmar nova senha</span>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
-                    placeholder="Repita a nova senha"
-                    autoComplete="new-password"
-                  />
-                </label>
-              </>
-            )}
+                {mode === "login" ? (
+                  <label className="field">
+                    <span>Senha</span>
+                    <input
+                      type="password"
+                      name="password"
+                      required
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="Informe sua senha"
+                      autoComplete="current-password"
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>Código de recuperação</span>
+                      <input
+                        type="text"
+                        name="resetCode"
+                        required
+                        spellCheck={false}
+                        value={resetCode}
+                        onChange={(event) => setResetCode(event.target.value)}
+                        placeholder="Código fornecido pelo administrador"
+                        autoComplete="one-time-code"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Nova senha</span>
+                      <input
+                        type="password"
+                        name="newPassword"
+                        required
+                        minLength={10}
+                        value={newPassword}
+                        onChange={(event) => setNewPassword(event.target.value)}
+                        placeholder="Defina a nova senha"
+                        autoComplete="new-password"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Confirmar nova senha</span>
+                      <input
+                        type="password"
+                        name="confirmPassword"
+                        ref={confirmationRef}
+                        required
+                        minLength={10}
+                        aria-invalid={Boolean(confirmationError)}
+                        aria-describedby={confirmationError ? "confirmation-error" : undefined}
+                        value={confirmPassword}
+                        onChange={(event) => {
+                          setConfirmPassword(event.target.value);
+                          setConfirmationError("");
+                        }}
+                        placeholder="Repita a nova senha"
+                        autoComplete="new-password"
+                      />
+                    </label>
+                  </>
+                )}
 
-            <div className="admin-inline-actions">
-              <button
-                type="button"
-                className="export-button auth-submit-button"
-                onClick={() => void (mode === "login" ? handleSubmit() : handlePasswordReset())}
-                disabled={isSubmitting}
-              >
-                {isSubmitting
-                  ? mode === "login"
-                    ? "Entrando..."
-                    : "Alterando..."
-                  : mode === "login"
-                    ? "Entrar no catálogo"
-                    : "Alterar senha"}
-              </button>
-              <button
-                type="button"
-                className="export-button is-secondary"
-                onClick={() => {
-                  setNotice(null);
-                  setMode(mode === "login" ? "reset" : "login");
-                }}
-              >
-                {mode === "login" ? "Esqueci minha senha" : "Voltar ao login"}
-              </button>
-              <button
-                type="button"
-                className="export-button is-secondary"
-                onClick={() => navigate("/erp")}
-              >
-                Painel interno
-              </button>
-            </div>
+                {confirmationError && (
+                  <p id="confirmation-error" className="field-error" role="alert">
+                    {confirmationError}
+                  </p>
+                )}
+                <div className="admin-inline-actions">
+                  <button
+                    type="submit"
+                    className="export-button auth-submit-button"
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting
+                      ? mode === "login"
+                        ? "Entrando…"
+                        : "Alterando…"
+                      : mode === "login"
+                        ? "Entrar no catálogo"
+                        : "Alterar senha"}
+                  </button>
+                  <button
+                    type="button"
+                    className="export-button is-secondary"
+                    onClick={() => {
+                      setNotice(null);
+                      setConfirmationError("");
+                      setMode(mode === "login" ? "reset" : "login");
+                    }}
+                  >
+                    {mode === "login" ? "Esqueci minha senha" : "Voltar ao login"}
+                  </button>
+                  <Link className="export-button is-secondary" to="/erp">
+                    Painel interno
+                  </Link>
+                </div>
+              </fieldset>
+            </form>
           </article>
         </section>
       </main>

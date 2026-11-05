@@ -125,7 +125,7 @@ def test_google_drive_media_proxy_serves_image(monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/jpeg")
-    assert response.headers["cache-control"] == "public, max-age=86400, s-maxage=86400"
+    assert response.headers["cache-control"] == "private, no-store"
     assert response.content == b"fake-image"
 
 
@@ -147,6 +147,46 @@ def test_photos_batch_returns_each_product_once(monkeypatch):
         "1234": {"white_background": "white-1234", "ambient": "ambient-1234", "measures": None},
         "5678": {"white_background": "white-5678", "ambient": "ambient-5678", "measures": None},
     }
+
+
+def test_photos_batch_uses_images_visible_in_gallery_without_variant_names(monkeypatch):
+    monkeypatch.setenv("CATALOG_GOOGLE_DRIVE_FOLDER_ID", "drive-folder")
+    monkeypatch.setenv("CATALOG_GOOGLE_DRIVE_API_KEY", "test-key")
+    monkeypatch.setattr("catalog.onedrive.find_local_images_for_code", lambda code: [])
+    monkeypatch.setattr("catalog.onedrive.resolve_local_products_root", lambda: None)
+    for provider in ("cdn_media", "vercel_blob_media", "s3_media"):
+        monkeypatch.setattr(f"catalog.{provider}.is_configured", lambda: False)
+    def unexpected_fallback(**kwargs):
+        raise AssertionError("A valid gallery photo should be returned directly by the Drive batch")
+    monkeypatch.setattr("catalog.api.endpoints.media.get_product_photos_payload", unexpected_fallback)
+    monkeypatch.setattr("catalog.google_drive.find_images_for_codes", lambda codes, folder_id=None: {
+        code: [{"name": f"{code} - DRIVER PARA LUMINARIA.jpg", "variant": 0,
+                "url": f"https://images.test/{code}.jpg"}] for code in codes
+    })
+    client = TestClient(app)
+    gallery = client.get("/catalog/produtos/5093/imagens").json()
+    response = client.get("/catalog/photos/batch?codes=5093")
+    assert response.status_code == 200
+    assert response.json()["5093"]["white_background"] == gallery["imagens"][0]["url"]
+
+
+def test_google_drive_categorization_retains_numbered_photos_and_fills_distinct_fallbacks(monkeypatch):
+    from catalog.google_drive import categorize_photos_for_codes
+
+    monkeypatch.setattr("catalog.google_drive.find_images_for_codes", lambda codes, folder_id=None: {
+        "5093": [
+            {"name": "5093.jpg", "url": "generic"},
+            {"name": "5093_1.jpg", "url": "primary"},
+            {"name": "5093 (2).jpg", "url": "dimensions"},
+            {"name": "5093 other.jpg", "url": "generic"},
+        ],
+        "5094": [{"name": "5094.jpg", "url": "only-image"}],
+        "5098": [],
+    })
+    photos = categorize_photos_for_codes(["5093", "5094", "5098"])
+    assert photos["5093"] == {"white_background": "primary", "ambient": "generic", "measures": "dimensions"}
+    assert photos["5094"] == {"white_background": "only-image", "ambient": None, "measures": None}
+    assert photos["5098"] == {"white_background": None, "ambient": None, "measures": None}
 
 
 def test_google_drive_falls_back_to_recursive_lookup_when_direct_query_is_empty(monkeypatch):

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ..spreadsheet import fetch_sheet
+from ..product_identity import deduplicate_products
 
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,20 @@ def _remove_unavailable_local_photo_urls(products: List[Dict]) -> List[Dict]:
     return cleaned
 
 
-def _file_sha256(path: Path) -> str:
+def _file_sha256(path: Path, *, windows_line_endings: bool = False) -> str:
     digest = hashlib.sha256()
+    pending_cr = b""
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            chunk = pending_cr + chunk
+            pending_cr = b"\r" if chunk.endswith(b"\r") else b""
+            if pending_cr:
+                chunk = chunk[:-1]
+            chunk = chunk.replace(b"\r\n", b"\n")
+            if windows_line_endings:
+                chunk = chunk.replace(b"\n", b"\r\n")
             digest.update(chunk)
+    digest.update(pending_cr)
     return digest.hexdigest()
 
 
@@ -66,10 +76,21 @@ def _load_prebuilt_catalog() -> List[Dict] | None:
         return None
     try:
         payload = json.loads(PREBUILT_CATALOG_PATH.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("source_hashes") != prebuilt_source_hashes():
+        if not isinstance(payload, dict):
             return None
+        stored_hashes = payload.get("source_hashes")
+        current_hashes = prebuilt_source_hashes()
+        if not isinstance(stored_hashes, dict) or stored_hashes.keys() != current_hashes.keys():
+            return None
+        for name, digest in current_hashes.items():
+            if stored_hashes[name] == digest:
+                continue
+            # Older Windows snapshots hashed CRLF bytes. Git may deploy the
+            # same JSON as LF; accept that spelling while rejecting changed data.
+            if stored_hashes[name] != _file_sha256(PREBUILT_SOURCE_PATHS[name], windows_line_endings=True):
+                return None
         products = payload.get("products")
-        return products if isinstance(products, list) else None
+        return deduplicate_products(products) if isinstance(products, list) else None
     except (OSError, json.JSONDecodeError):
         logger.warning("Ignoring invalid prebuilt catalog at %s", PREBUILT_CATALOG_PATH)
         return None
@@ -116,13 +137,13 @@ def list_catalog_products() -> List[Dict]:
             if now - _catalog_cache_refreshed_at >= _SERVERLESS_CATALOG_TTL_SECONDS:
                 _cached_catalog_products.cache_clear()
                 _catalog_cache_refreshed_at = now
-        return list(_cached_catalog_products())
-    return _build_catalog_products()
+        return deduplicate_products(list(_cached_catalog_products()))
+    return deduplicate_products(_build_catalog_products())
 
 
 def fetch_sheet_or_local_products(url: str) -> List[Dict]:
     try:
-        return fetch_sheet(url)
+        return deduplicate_products(fetch_sheet(url))
     except ValueError as exc:
         logger.warning("Sheet fetch failed, trying local fallback: %s", exc, exc_info=True)
         try:

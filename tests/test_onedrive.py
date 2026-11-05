@@ -93,9 +93,12 @@ def test_auth_endpoints(monkeypatch):
 
         def acquire_token_by_authorization_code(self, code, scopes, redirect_uri):
             assert code == "abc123"
-            return {"access_token": "token"}
+            return {"access_token": "token", "id_token_claims": {"preferred_username": "azure-admin@example.com"}}
 
     monkeypatch.setattr('catalog.auth._build_msal_app', lambda: DummyApp())
+    monkeypatch.setattr('catalog.auth.AUTH_CONFIGURED', True)
+    monkeypatch.setenv('CATALOG_ADMIN_LOGIN_EMAIL', 'azure-admin@example.com')
+    monkeypatch.setenv('CATALOG_ADMIN_LOGIN_PASSWORD', 'synthetic-azure-account')
 
     # Importa app apos patch para registrar rotas normalmente.
     from app import app
@@ -137,6 +140,9 @@ def test_auth_callback_sanitizes_token_exchange_failure(monkeypatch):
             return {"error": "invalid_grant", "error_description": "secret-provider-detail"}
 
     monkeypatch.setattr('catalog.auth._build_msal_app', lambda: DummyApp())
+    monkeypatch.setattr('catalog.auth.AUTH_CONFIGURED', True)
+    monkeypatch.setenv('CATALOG_ADMIN_LOGIN_EMAIL', 'azure-admin@example.com')
+    monkeypatch.setenv('CATALOG_ADMIN_LOGIN_PASSWORD', 'synthetic-azure-account')
 
     from app import app
     from catalog.auth import STATE_COOKIE_NAME
@@ -234,12 +240,11 @@ def test_local_products_fallbacks_to_stock_report(monkeypatch, tmp_path):
 
     products = list_local_products()
 
-    assert [item["Codigo"] for item in products] == ["1181", "2002", "2002"]
+    assert [item["Codigo"] for item in products] == ["1181", "2002"]
     assert products[0]["Nome"] == "FITA LED 2835 3000K 12V 5M"
     assert products[0]["Categoria"] == "FITA LED"
     assert products[1]["Nome"] == "LUMINARIA SPOT LS-001"
     assert products[1]["Categoria"] == "LUMINARIA"
-    assert products[2]["Nome"] == "LUMINARIA DUPLICADA"
     assert products[0]["URLFoto"].startswith("/catalog/local/asset?path=")
     assert products[0]["FotoBranco"].startswith("/catalog/local/asset?path=")
 
@@ -283,12 +288,11 @@ def test_local_products_fill_specs_from_technical_specs_file(monkeypatch, tmp_pa
 
     products = list_local_products()
 
-    assert [item["Codigo"] for item in products] == ["1181", "2002", "2002"]
+    assert [item["Codigo"] for item in products] == ["1181", "2002"]
     assert products[0]["Nome"] == "FITA LED 2835 3000K 12V 5M"
     assert products[0]["Categoria"] == "FITA LED"
     assert products[1]["Nome"] == "LUMINARIA SPOT LS-001"
     assert products[1]["Categoria"] == "LUMINARIA"
-    assert products[2]["Nome"] == "LUMINARIA DUPLICADA"
     assert products[0]["URLFoto"].startswith("/catalog/local/asset?path=")
     assert products[0]["FotoBranco"].startswith("/catalog/local/asset?path=")
 

@@ -3,6 +3,9 @@
 frontend/.env
 frontend/.env.*
 .aws-sam/
+.aws/
+.agents/
+.codex/
 .codex-tmp/
 .claude/
 .pytest_cache/
@@ -14,9 +17,22 @@ frontend/node_modules/
 frontend/dist/
 reports/admin_users.json
 reports/representative_users.json
+reports/online_users.json
+reports/POSICAO_ESTOQUE.xlsx
+reports/codigos_sem_foto.csv
+reports/relatorio_fotos_estoque_4digitos.csv
 reports/erp_inbox/
 reports/.pytest*/
 tests/
 docs/
 edge-profile/
 edge-profile-2/
+reports/*.lock
+
+# Deploy catalog data, not audit reports or browser evidence.
+reports/*.json
+!reports/erp_products.json
+!reports/media_manifest.json
+!reports/catalog_runtime.json
+reports/*.png
+reports/*.md

@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -18,7 +19,7 @@ from catalog.core import configure_logging, load_settings
 
 logger = logging.getLogger(__name__)
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self' https://login.microsoftonline.com",
     # A visualizacao de produtos usa a camera, mas continua bloqueada para
     # origens/frames de terceiros. Microfone e geolocalizacao nao sao usados.
     "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
@@ -74,7 +75,13 @@ def _configure_sessions(
 def _configure_security_headers(app: FastAPI) -> None:
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
-        response = await call_next(request)
+        from .browser_security import mutation_is_trusted
+        if mutation_is_trusted(request):
+            response = await call_next(request)
+        else:
+            response = JSONResponse(status_code=403, content={"detail": "Untrusted browser request"})
+        if request.url.path.startswith("/auth/"):
+            response.headers["Cache-Control"] = "no-store"
         for header, value in SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
         if request.url.scheme == "https":
@@ -100,6 +107,7 @@ def _configure_vercel_oidc(app: FastAPI) -> None:
 def _configure_representative_idle_timeout(app: FastAPI) -> None:
     @app.middleware("http")
     async def refresh_active_representative_session(request: Request, call_next):
+        from starlette.concurrency import run_in_threadpool
         from .auth import (
             _build_representative_token,
             _representative_jwt_expires_seconds,
@@ -108,7 +116,7 @@ def _configure_representative_idle_timeout(app: FastAPI) -> None:
         )
 
         is_health_probe = request.url.path == "/health" or request.url.path.startswith("/health/")
-        claims = None if is_health_probe else get_representative_claims(
+        claims = None if is_health_probe else await run_in_threadpool(get_representative_claims,
             request,
             request.headers.get("authorization"),
         )
@@ -128,6 +136,8 @@ def _configure_representative_idle_timeout(app: FastAPI) -> None:
                     "email": str(claims.get("email") or claims.get("sub") or ""),
                     "name": str(claims.get("name") or claims.get("email") or "Representante"),
                     "_credential_version": str(claims.get("credential_version") or ""),
+                    "_session_id": str(claims["session_id"]),
+                    "_session_expires_at": int(claims["session_expires_at"]),
                 }
             )
             _set_representative_cookie(response, request, refreshed_token)
@@ -142,10 +152,16 @@ def _register_disabled_docs_routes(app: FastAPI) -> None:
         return JSONResponse(status_code=404, content={"error": "API docs disabled"})
 
 
-def create_app() -> FastAPI:
-    # Carrega o .env antes de importar modulos que dependem do ambiente.
+def _load_runtime_environment(base_dir: Path | None = None) -> None:
+    """Load local configuration while preserving explicit process environment values."""
     if os.getenv("CATALOG_SKIP_DOTENV", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        load_dotenv()
+        root = base_dir or Path(__file__).resolve().parents[1]
+        load_dotenv(root / ".env.local")
+        load_dotenv(root / ".env")
+
+
+def create_app() -> FastAPI:
+    _load_runtime_environment()
     configure_logging()
     settings = load_settings()
 

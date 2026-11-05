@@ -92,6 +92,7 @@ export interface ErpFileRecord {
   updated_at: string;
   is_active: boolean;
   is_deployed_source?: boolean;
+  is_review?: boolean;
 }
 
 export interface ErpProductsResponse extends ErpStatusResponse {
@@ -193,6 +194,20 @@ export interface RepresentativeAdminListResponse {
   representative_users: number;
 }
 
+export interface OnlineRepresentativeUser {
+  email: string;
+  name: string;
+  last_seen_at: string;
+}
+
+export interface OnlineRepresentativesResponse {
+  users: OnlineRepresentativeUser[];
+  total_online: number;
+  checked_at: string;
+  online_window_seconds: number;
+  tracking_available: boolean;
+}
+
 export interface RepresentativeAdminSavePayload {
   email: string;
   name: string;
@@ -218,6 +233,7 @@ export interface RepresentativePasswordResetResponse extends RepresentativeAdmin
 
 export interface RepresentativeSessionStatus {
   authenticated: boolean;
+  activity_tracking_available?: boolean;
   provider?: string | null;
   expires_at?: string | null;
   login_available: boolean;
@@ -234,4 +250,33 @@ export interface RepresentativeAuthResponse extends RepresentativeSessionStatus 
 export interface RepresentativePasswordResetCompleteResponse {
   success: boolean;
   user: RepresentativeUser;
+}
+
+
+export interface TechnicalSheetRow {
+  row: number;
+  code: string;
+  name: string;
+  specs: string;
+  previous_specs: string;
+  status: "updated" | "unchanged" | "invalid";
+  issues: string[];
+}
+
+export interface TechnicalSheetPreview {
+  filename: string;
+  sheets: string[];
+  sheet: string;
+  preview_key: string;
+  total_rows: number;
+  updated_count: number;
+  unchanged_count: number;
+  invalid_count: number;
+  rows: TechnicalSheetRow[];
+}
+
+export interface TechnicalSheetImportSummary extends ErpImportSummary {
+  updated_count: number;
+  unchanged_count: number;
+  invalid_count: number;
 }

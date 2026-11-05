@@ -36,9 +36,18 @@ explícito esse fluxo.
 
 ## Persistência de representantes
 
-O cadastro de representantes usa um Vercel Blob privado quando `BLOB_READ_WRITE_TOKEN` está configurado. O mesmo Blob guarda o snapshot ERP ativo em `catalogo/erp_products.json` com `CATALOG_ERP_BLOB_ENABLED=true`. Sem o token, o projeto mantém arquivos locais para desenvolvimento; no runtime Vercel, a prontidão fica em `503` até o Blob estar acessível.
+O projeto usa `CATALOG_STATE_BACKEND=blob` para manter usuarios e ERP em um
+Vercel Blob privado, mesmo que ainda existam variaveis de PostgreSQL ou S3.
+Consulte [a configuracao e transferencia entre Blobs](vercel-blob.md) antes de
+publicar o novo projeto da empresa.
 
-Crie e conecte um Blob privado ao projeto. A Vercel injeta `BLOB_READ_WRITE_TOKEN` automaticamente nos ambientes selecionados. O objeto é salvo como `catalogo/representative_users.json`; o caminho pode ser alterado por `CATALOG_REPRESENTATIVE_BLOB_PATH`.
+Conecte o Blob privado ao projeto e ao ambiente Production. A Vercel fornece
+`BLOB_READ_WRITE_TOKEN`; os objetos sao `catalogo/representative_users.json` e
+`catalogo/erp_products.json`. `CATALOG_ERP_BLOB_ENABLED=true` habilita o ERP.
+Sem token ou objetos atuais, a configuracao sozinha nao recupera os dados.
+
+A atividade online nao grava no Blob. As fotos permanecem na fonte atual,
+com `CATALOG_MEDIA_BLOB_ENABLED=false`.
 
 Arquivos temporários enviados para prévia continuam no diretório da função e não são persistentes. O catálogo ERP ativado é armazenado no Blob.
 
@@ -97,9 +106,9 @@ Os nomes dos arquivos devem começar com o código do produto, por exemplo `1234
 
 O uso padrão da Drive API não tem custo adicional dentro das cotas publicadas pelo Google. Monitore o consumo caso o catálogo passe a gerar tráfego muito alto.
 
-## Vercel Blob opcional
+## Fotos no Vercel Blob (opcional)
 
-A integração com Vercel Blob permanece disponível, mas desativada. O utilitário `scripts/upload_vercel_media.py` apenas simula a sincronização sem `--apply`; não execute a carga enquanto a opção gratuita estiver em uso.
+O armazenamento de fotos no Vercel Blob permanece desativado; usuarios e ERP usam o Blob privado. O utilitário `scripts/upload_vercel_media.py` apenas simula a sincronização sem `--apply`; não execute a carga enquanto a opção gratuita estiver em uso.
 
 ## Validação local
 
