@@ -153,7 +153,8 @@ export default function TechnicalSheetPanel({ onApplied, onUnauthorized }: Props
               </select>
             </label>
           </div>
-          <div className="technical-sheet-table-wrap" role="region" aria-label="Dados técnicos encontrados" tabIndex={0}>
+          <p className="technical-sheet-scroll-hint" id="technical-sheet-scroll-help">Deslize a tabela para os lados para comparar todos os dados.</p>
+          <div className="technical-sheet-table-wrap" role="region" aria-label="Dados técnicos encontrados" aria-describedby="technical-sheet-scroll-help" tabIndex={0}>
             <table className="technical-sheet-table">
               <caption className="sr-only">Comparação dos dados atuais com os dados da planilha</caption>
               <thead><tr><th scope="col">Linha / produto</th><th scope="col">Dados atuais</th><th scope="col">Dados da planilha</th><th scope="col">Resultado</th></tr></thead>

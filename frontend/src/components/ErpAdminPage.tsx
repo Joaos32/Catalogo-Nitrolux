@@ -1,6 +1,7 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import TechnicalSheetPanel from "./TechnicalSheetPanel";
+import "../admin-layout.css";
 import { useUnsavedChanges } from "../lib/use-unsaved-changes";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -58,6 +59,24 @@ interface RepresentativeDraft {
   name: string;
   password: string;
   isAdmin: boolean;
+}
+
+const ADMIN_SECTIONS = [
+  { id: "deploy", label: "Implantação", description: "Revisar e ativar JSON" },
+  { id: "representatives", label: "Representantes", description: "Gerenciar acessos" },
+  { id: "products", label: "Produtos", description: "Editar JSON ativo" },
+  { id: "technical", label: "Dados técnicos", description: "Ler planilha Excel" },
+  { id: "online", label: "Usuários online", description: "Acompanhar acessos ativos" },
+] as const;
+
+type AdminSection = (typeof ADMIN_SECTIONS)[number]["id"];
+
+function revealMobileEditor(heading: HTMLHeadingElement | null): void {
+  if (!window.matchMedia("(max-width: 960px)").matches) return;
+  requestAnimationFrame(() => {
+    heading?.focus({ preventScroll: true });
+    heading?.scrollIntoView({ block: "start" });
+  });
 }
 
 const EMPTY_DRAFT: ErpProductDraft = {
@@ -249,7 +268,10 @@ export default function ErpAdminPage(): JSX.Element {
   const [loginPassword, setLoginPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [activeAdminSection, setActiveAdminSection] = useState<"deploy" | "representatives" | "products" | "technical" | "online">(() => new URLSearchParams(window.location.search).get("section") === "technical" ? "technical" : "deploy");
+  const [activeAdminSection, setActiveAdminSection] = useState<AdminSection>(() => new URLSearchParams(window.location.search).get("section") === "technical" ? "technical" : "deploy");
+
+  const productEditorHeading = useRef<HTMLHeadingElement>(null);
+  const representativeEditorHeading = useRef<HTMLHeadingElement>(null);
 
   const productDirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const representativeDirty = JSON.stringify(representativeDraft) !== JSON.stringify(savedRepresentativeDraft);
@@ -698,7 +720,7 @@ export default function ErpAdminPage(): JSX.Element {
   };
 
   return (
-    <div className="page-shell">
+    <div className="page-shell admin-page">
       <div className="bg-orb orb-a" aria-hidden="true"></div>
       <div className="bg-orb orb-b" aria-hidden="true"></div>
       <header className="hero hero-admin">
@@ -767,27 +789,19 @@ export default function ErpAdminPage(): JSX.Element {
                 </div>
               </div>
             </section>
+            <nav className="admin-mobile-navigation" aria-label="Áreas do painel">
+              <label htmlFor="admin-section">Área do painel</label>
+              <select id="admin-section" value={activeAdminSection} onChange={(event) => setActiveAdminSection(event.target.value as AdminSection)}>
+                {ADMIN_SECTIONS.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
+              </select>
+            </nav>
             <nav className="admin-workspace-tabs" aria-label="Áreas do painel">
-              <button type="button" className={activeAdminSection === "deploy" ? "is-active" : ""} onClick={() => setActiveAdminSection("deploy")}>
-                <span>Implantação</span>
-                <small>Revisar e ativar JSON</small>
-              </button>
-              <button type="button" className={activeAdminSection === "representatives" ? "is-active" : ""} onClick={() => setActiveAdminSection("representatives")}>
-                <span>Representantes</span>
-                <small>Gerenciar acessos</small>
-              </button>
-              <button type="button" className={activeAdminSection === "products" ? "is-active" : ""} onClick={() => setActiveAdminSection("products")}>
-                <span>Produtos</span>
-                <small>Editar JSON ativo</small>
-              </button>
-              <button type="button" className={activeAdminSection === "technical" ? "is-active" : ""} onClick={() => setActiveAdminSection("technical")}>
-                <span>Dados técnicos</span>
-                <small>Ler planilha Excel</small>
-              </button>
-              <button type="button" className={activeAdminSection === "online" ? "is-active" : ""} onClick={() => setActiveAdminSection("online")}>
-                <span>Usuários online</span>
-                <small>Acompanhar acessos ativos</small>
-              </button>
+              {ADMIN_SECTIONS.map((section) => (
+                <button key={section.id} type="button" className={activeAdminSection === section.id ? "is-active" : ""} aria-current={activeAdminSection === section.id ? "page" : undefined} onClick={() => setActiveAdminSection(section.id)}>
+                  <span>{section.label}</span>
+                  <small>{section.description}</small>
+                </button>
+              ))}
             </nav>
             {activeAdminSection === "technical" && (
               <TechnicalSheetPanel onApplied={async () => {
@@ -974,6 +988,7 @@ export default function ErpAdminPage(): JSX.Element {
                                   className="export-button is-secondary"
                                   onClick={() => {
                                     if (!replaceRepresentativeDraft(representativeToDraft(user))) return;
+                                    revealMobileEditor(representativeEditorHeading.current);
                                     setNotice({ tone: "info", text: `Representante ${user.email} carregado para edição.` });
                                   }}
                                 >
@@ -1032,7 +1047,7 @@ export default function ErpAdminPage(): JSX.Element {
                 <div className="admin-panel-head">
                   <div>
                     <p className="admin-eyebrow">Cadastro</p>
-                    <h2>
+                    <h2 ref={representativeEditorHeading} className="admin-editor-heading" tabIndex={-1}>
                       {representativeDraft.currentEmail
                         ? `Edição de ${representativeDraft.currentEmail}`
                         : "Novo representante"}
@@ -1147,13 +1162,13 @@ export default function ErpAdminPage(): JSX.Element {
                     const name = getRecordField(product, ["Nome"]) || `Produto ${code}`;
                     const category = getRecordField(product, ["Categoria"]) || "Sem categoria";
                     const isCurrentDraft = draft.code.trim() === code && Boolean(code);
-                    return <div key={code || name} role="listitem"><button type="button" className={`admin-product-item ${isCurrentDraft ? "is-selected" : ""}`} onClick={() => { if (!replaceProductDraft(productToDraft(product))) return; setNotice({ tone: "info", text: `Produto ${code} carregado para edição.` }); }}><div><strong>{name}</strong><span>{category}</span></div><small>#{code || "sem código"}</small></button></div>;
+                    return <div key={code || name} role="listitem"><button type="button" className={`admin-product-item ${isCurrentDraft ? "is-selected" : ""}`} onClick={() => { if (!replaceProductDraft(productToDraft(product))) return; revealMobileEditor(productEditorHeading.current); setNotice({ tone: "info", text: `Produto ${code} carregado para edição.` }); }}><div><strong>{name}</strong><span>{category}</span></div><small>#{code || "sem código"}</small></button></div>;
                   })}
                 </div>
                 {filteredProducts.length > productListLimit && <button type="button" className="export-button" onClick={() => setProductListLimit((current) => current + 50)}>Carregar mais produtos da lista ({filteredProducts.length - productListLimit} restantes)</button>}
               </article>
               <article className="admin-panel admin-form-panel">
-                <div className="admin-panel-head"><div><p className="admin-eyebrow">Produto</p><h2>{draft.code.trim() ? `Edição do código ${draft.code.trim()}` : "Novo produto"}</h2></div></div>
+                <div className="admin-panel-head"><div><p className="admin-eyebrow">Produto</p><h2 ref={productEditorHeading} className="admin-editor-heading" tabIndex={-1}>{draft.code.trim() ? `Edição do código ${draft.code.trim()}` : "Novo produto"}</h2></div></div>
                 <fieldset className="admin-form-grid editor-fields" disabled={isSaving}>
                   <label className="field"><span>Código</span><input type="text" value={draft.code} onChange={(event) => setDraft((current) => ({ ...current, code: event.target.value }))} placeholder="Ex.: 8877" /></label>
                   <label className="field"><span>Categoria</span><input type="text" value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Ex.: ILUMINACAO TECNICA" /></label>

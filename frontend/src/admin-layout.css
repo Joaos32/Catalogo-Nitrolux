@@ -1,0 +1,215 @@
+/* Keep administrative content within its grid track, including long file names. */
+.admin-page .admin-content,
+.admin-page .admin-content > *,
+.admin-page :is(.admin-panel, .admin-grid, .admin-form-grid, .admin-preview-grid,
+  .admin-stats-grid, .admin-file-copy, .admin-file-title-row, .admin-change-copy,
+  .admin-product-item > *, .admin-sample-row > *, .admin-panel-head > *) {
+  min-width: 0;
+}
+
+.admin-page .admin-content {
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
+}
+
+.admin-page .admin-mobile-navigation {
+  display: none;
+}
+
+.admin-page .admin-editor-heading {
+  scroll-margin-top: 24px;
+}
+
+.admin-page :is(.admin-workspace-tabs button, .admin-mobile-navigation select,
+  .admin-editor-heading, .technical-sheet-table-wrap):focus-visible {
+  outline: 3px solid #2a6cd7;
+  outline-offset: 3px;
+}
+
+.admin-page .admin-upload-button:focus-within {
+  outline: 3px solid #2a6cd7;
+  outline-offset: 3px;
+}
+
+.admin-page .admin-file-title-row > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-page .technical-sheet-scroll-hint {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .admin-page :is(.admin-grid, .admin-grid-products) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-page .admin-workspace-tabs button {
+    padding-inline: 9px;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-page .admin-file-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-page .admin-file-actions {
+    justify-content: flex-start;
+  }
+
+  .admin-page .admin-excel-entry {
+    flex-wrap: wrap;
+  }
+}
+
+@media (min-width: 741px) and (max-width: 960px) {
+  .admin-page .admin-editor-heading {
+    scroll-margin-top: 140px;
+  }
+}
+
+@media (max-width: 740px) {
+  .admin-page .hero-admin {
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .admin-page .hero-kicker {
+    display: none;
+  }
+
+  .admin-page .hero-brand-name {
+    margin: 0;
+    font-size: 24px;
+    letter-spacing: 0.04em;
+  }
+
+  .admin-page .hero-brand-subtitle {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .admin-page .hero-brand-subtitle::before,
+  .admin-page .hero-brand-subtitle::after {
+    display: none;
+  }
+
+  .admin-page .hero-admin-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-page :is(.hero-link-button, .export-button) {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.4;
+    white-space: normal;
+  }
+
+  .admin-page .admin-content {
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .admin-page .admin-command-center,
+  .admin-page .admin-panel {
+    padding: 14px;
+    gap: 14px;
+  }
+
+  .admin-page :is(.admin-command-copy, .admin-panel-head) h2 {
+    font-size: 21px;
+    line-height: 1.25;
+  }
+
+  .admin-page .admin-workspace-tabs {
+    display: none;
+  }
+
+  .admin-page .admin-mobile-navigation {
+    display: grid;
+    gap: 6px;
+    padding: 12px 14px;
+    border: 1px solid rgba(26, 92, 190, 0.13);
+    border-radius: 14px;
+    background: #fff;
+  }
+
+  .admin-page .admin-mobile-navigation label {
+    color: var(--ink-700);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .admin-page .admin-mobile-navigation select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 10px 12px;
+    border: 1px solid rgba(31, 104, 208, 0.24);
+    border-radius: 10px;
+    background: #f8fbff;
+    color: #123a75;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .admin-page .admin-panel-head {
+    align-items: stretch;
+  }
+
+  .admin-page :is(.admin-stats-grid, .admin-preview-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-page .admin-change-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-page .admin-file-actions {
+    flex-direction: row;
+  }
+
+  .admin-page .admin-file-actions .export-button {
+    flex: 1 1 120px;
+    width: auto;
+  }
+
+  .admin-page :is(.admin-product-item, .admin-sample-row) {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .admin-page .field :is(input, select, textarea),
+  .admin-page .technical-sheet-file select {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .admin-page .field textarea {
+    resize: vertical;
+  }
+
+  .admin-page .technical-sheet-file {
+    width: 100%;
+  }
+
+  .admin-page .technical-sheet-file select {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .admin-page .technical-sheet-scroll-hint {
+    display: block;
+    margin: 0;
+    color: var(--ink-700);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
